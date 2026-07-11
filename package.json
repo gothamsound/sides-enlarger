@@ -1,0 +1,17 @@
+{
+  "name": "sides-enlarger",
+  "version": "1.0.0",
+  "description": "In-browser tool that enlarges screenplay 'sides' dialogue ~25% while keeping every page pixel-identical. No server, no uploads.",
+  "scripts": {
+    "build": "node build.mjs",
+    "fixture": "python3 tools/make_fixture.py",
+    "test": "bash tools/test.sh"
+  },
+  "keywords": ["screenplay", "sides", "pdf", "accessibility", "actor"],
+  "license": "MIT",
+  "private": true,
+  "devDependencies": {
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^3.11.174"
+  }
+}

@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Sides Enlarger</title>
+<style>
+  :root { --ink:#1a1a1a; --paper:#faf8f4; --accent:#2f6f4f; --warn:#a05a00; --err:#b3261e; }
+  * { box-sizing: border-box; }
+  body { margin:0; font: 16px/1.45 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+         color:var(--ink); background:var(--paper); padding:24px 16px 60px; }
+  main { max-width: 980px; margin: 0 auto; }
+  h1 { font-size: 26px; margin: 0 0 2px; }
+  h1 .mono { font-family: "Courier New", monospace; }
+  .sub { color:#666; margin:0 0 18px; font-size:14px; }
+  .who { display:inline-block; background:#e8efe9; color:var(--accent); border-radius:12px;
+         padding:1px 10px; font-size:13px; margin-left:8px; vertical-align:middle; }
+  #drop { border:2.5px dashed #b9b2a6; border-radius:14px; padding:44px 20px; text-align:center;
+          background:#fff; cursor:pointer; transition:border-color .15s, background .15s; }
+  #drop.hover { border-color:var(--accent); background:#f0f6f2; }
+  #drop strong { font-size:19px; }
+  #drop p { margin:6px 0 0; color:#777; font-size:14px; }
+  .controls { display:flex; align-items:center; gap:16px; margin:20px 0 6px; flex-wrap:wrap; }
+  .controls label { font-weight:600; }
+  input[type=range] { flex:1; min-width:200px; accent-color: var(--accent); height:34px; }
+  #scaleVal { font-family:"Courier New",monospace; font-size:20px; font-weight:700; width:70px; }
+  #download { display:none; width:100%; padding:18px; font-size:21px; font-weight:700; color:#fff;
+              background:var(--accent); border:0; border-radius:12px; cursor:pointer; margin:14px 0 6px; }
+  #download:hover { filter:brightness(1.08); }
+  #status { margin:10px 0; font-size:15px; min-height:22px; }
+  #status.err { color:var(--err); font-weight:600; }
+  ul#warnings { margin:6px 0 0; padding-left:20px; color:var(--warn); font-size:14px; }
+  ul#warnings li { margin:2px 0; }
+  .previews { display:none; margin-top:18px; }
+  .previews.on { display:block; }
+  .pager { display:flex; align-items:center; justify-content:center; gap:14px; margin-bottom:10px; }
+  .pager button { padding:8px 16px; font-size:16px; border:1px solid #ccc; background:#fff;
+                  border-radius:8px; cursor:pointer; }
+  .pager button:disabled { opacity:.35; cursor:default; }
+  #pageNo { font-family:"Courier New",monospace; font-weight:700; }
+  .pvRow { display:flex; gap:12px; }
+  .pv { flex:1; min-width:0; }
+  .pv h3 { margin:0 0 6px; font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:#888; }
+  .pv canvas { width:100%; height:auto; border:1px solid #ddd; border-radius:8px; background:#fff; display:block; }
+  footer { margin-top:26px; color:#999; font-size:13px; text-align:center; }
+  @media (max-width:760px){ .pvRow { flex-direction:column; } }
+</style>
+</head>
+<body>
+<main>
+  <h1><span class="mono">SIDES ENLARGER</span><span id="who" class="who" hidden></span></h1>
+  <p class="sub">Drop today's sides. Dialogue comes back bigger — same pages, same everything else.
+     Your script never leaves this device.</p>
+
+  <div id="drop" tabindex="0" role="button" aria-label="Choose a PDF">
+    <strong>Drop your sides PDF here</strong>
+    <p>or click to choose a file</p>
+    <input type="file" id="file" accept="application/pdf,.pdf" hidden>
+  </div>
+
+  <div class="controls">
+    <label for="scale">Dialogue size</label>
+    <input type="range" id="scale" min="1.0" max="1.5" step="0.05" value="1.25">
+    <span id="scaleVal">1.25&times;</span>
+  </div>
+
+  <div id="status"></div>
+  <ul id="warnings"></ul>
+
+  <button id="download">Download enlarged PDF</button>
+
+  <div class="previews" id="previews">
+    <div class="pager">
+      <button id="prevPg" aria-label="previous page">&#8592;</button>
+      <span id="pageNo">1 / 1</span>
+      <button id="nextPg" aria-label="next page">&#8594;</button>
+    </div>
+    <div class="pvRow">
+      <div class="pv"><h3>Original</h3><canvas id="pvBefore"></canvas></div>
+      <div class="pv"><h3>Enlarged</h3><canvas id="pvAfter"></canvas></div>
+    </div>
+  </div>
+
+  <footer>Everything runs in your browser — no uploads, no accounts, no tracking.</footer>
+</main>
+
+<script>/*__PDFJS__*/</script>
+<script>window.__PDFWORKER_B64__ = "/*__PDFWORKER_B64__*/";</script>
+<script>/*__PDFLIB__*/</script>
+<script>/*__ENGINE__*/</script>
+<script>
+(function () {
+  'use strict';
+  var pdfjs = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
+  // Reconstitute the pdf.js worker from embedded base64 into a Blob URL and run
+  // it as a real Web Worker — fully offline, no network, deterministic.
+  try {
+    var wbin = atob(window.__PDFWORKER_B64__);
+    var wbytes = new Uint8Array(wbin.length);
+    for (var wi = 0; wi < wbin.length; wi++) wbytes[wi] = wbin.charCodeAt(wi);
+    var wurl = URL.createObjectURL(new Blob([wbytes], { type: 'text/javascript' }));
+    pdfjs.GlobalWorkerOptions.workerSrc = wurl;
+  } catch (e) {
+    // last-resort: fake worker via the global message handler if present
+    pdfjs.GlobalWorkerOptions.workerSrc = '';
+  }
+
+  var engine = createSidesEngine({ pdfjsLib: pdfjs, PDFLib: window.PDFLib });
+
+  // ---- who am I: #laura -> per-person preferences (nothing else is stored) ----
+  function personKey() {
+    var h = (location.hash || '').replace(/^#/, '').trim();
+    if (h) return h;
+    var p = (location.pathname || '').split('/').filter(Boolean).pop() || '';
+    if (p && !/\.(html?|pdf)$/i.test(p)) return p;
+    return 'default';
+  }
+  var who = personKey();
+  var PREFS = 'sides-enlarger:' + who;
+  if (who !== 'default') {
+    var chip = document.getElementById('who');
+    chip.textContent = who;
+    chip.hidden = false;
+  }
+  function loadPrefs() {
+    try { return JSON.parse(localStorage.getItem(PREFS)) || {}; } catch (e) { return {}; }
+  }
+  function savePrefs(p) { try { localStorage.setItem(PREFS, JSON.stringify(p)); } catch (e) {} }
+
+  // ---- elements ----
+  var drop = document.getElementById('drop');
+  var fileInput = document.getElementById('file');
+  var slider = document.getElementById('scale');
+  var scaleVal = document.getElementById('scaleVal');
+  var status = document.getElementById('status');
+  var warnUl = document.getElementById('warnings');
+  var dlBtn = document.getElementById('download');
+  var previews = document.getElementById('previews');
+  var pvB = document.getElementById('pvBefore');
+  var pvA = document.getElementById('pvAfter');
+  var prevPg = document.getElementById('prevPg');
+  var nextPg = document.getElementById('nextPg');
+  var pageNo = document.getElementById('pageNo');
+
+  var prefs = loadPrefs();
+  if (prefs.scale >= 1 && prefs.scale <= 1.5) slider.value = prefs.scale;
+  scaleVal.innerHTML = (+slider.value).toFixed(2) + '&times;';
+
+  var originalBytes = null, originalName = 'sides.pdf';
+  var outBlobUrl = null, busy = false, queued = false;
+
+  // ---- canvas preview (works on iOS/Android where PDF iframes don't) ----
+  var docB = null, docA = null, curPage = 1, numPages = 1, renderSeq = 0;
+
+  function openDoc(bytes) {
+    return pdfjs.getDocument({ data: bytes.slice(), isEvalSupported: false, disableFontFace: false }).promise;
+  }
+  function renderPage(doc, canvas, pageIdx, seq) {
+    return doc.getPage(pageIdx).then(function (page) {
+      if (seq !== renderSeq) return;
+      var cssW = canvas.clientWidth || canvas.parentElement.clientWidth || 460;
+      var vp1 = page.getViewport({ scale: 1 });
+      var ratio = Math.min(2, window.devicePixelRatio || 1);
+      var scale = (cssW * ratio) / vp1.width;
+      var vp = page.getViewport({ scale: scale });
+      canvas.width = vp.width; canvas.height = vp.height;
+      return page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+    });
+  }
+  function showPage(n) {
+    if (!docB || !docA) return;
+    curPage = Math.max(1, Math.min(numPages, n));
+    pageNo.textContent = curPage + ' / ' + numPages;
+    prevPg.disabled = curPage <= 1;
+    nextPg.disabled = curPage >= numPages;
+    var seq = ++renderSeq;
+    renderPage(docB, pvB, curPage, seq);
+    renderPage(docA, pvA, curPage, seq);
+  }
+  prevPg.addEventListener('click', function () { showPage(curPage - 1); });
+  nextPg.addEventListener('click', function () { showPage(curPage + 1); });
+
+  function setStatus(msg, isErr) {
+    status.textContent = msg || '';
+    status.className = isErr ? 'err' : '';
+  }
+  function showWarnings(report) {
+    warnUl.innerHTML = '';
+    var items = [];
+    (report.warnings || []).forEach(function (w) { items.push(w); });
+    (report.pages || []).forEach(function (p) {
+      (p.warnings || []).forEach(function (w) { items.push('Page ' + p.page + ': ' + w); });
+    });
+    items.forEach(function (w) {
+      var li = document.createElement('li');
+      li.textContent = w;
+      warnUl.appendChild(li);
+    });
+  }
+
+  function process() {
+    if (!originalBytes) return;
+    if (busy) { queued = true; return; }
+    busy = true;
+    var s = +slider.value;
+    setStatus('Working… (' + s.toFixed(2) + '×)');
+    // yield to paint before heavy work
+    setTimeout(function () {
+      engine.process(originalBytes, { scale: s }).then(function (res) {
+        var blob = new Blob([res.bytes], { type: 'application/pdf' });
+        if (outBlobUrl) URL.revokeObjectURL(outBlobUrl);
+        outBlobUrl = URL.createObjectURL(blob);
+        showWarnings(res.report);
+        var prevA = docA;
+        return openDoc(res.bytes).then(function (d) {
+          docA = d; if (prevA) prevA.destroy();
+          numPages = docA.numPages;
+          previews.className = 'previews on';
+          showPage(curPage);
+          return res;
+        });
+      }).then(function (res) {
+        if (!res) return;
+        var scaled = res.report.pages.filter(function (p) { return p.appliedScale > 1.001; }).length;
+        setStatus('Done — dialogue enlarged on ' + scaled + ' of ' + res.report.pages.length + ' pages.');
+        dlBtn.style.display = 'block';
+        previews.className = 'previews on';
+        busy = false;
+        if (queued) { queued = false; process(); }
+      }).catch(function (e) {
+        busy = false;
+        warnUl.innerHTML = '';
+        if (e && e.code === 'SCANNED') setStatus(e.message, true);
+        else setStatus('Sorry — could not process this PDF. (' + (e && e.message ? e.message : e) + ')', true);
+        dlBtn.style.display = 'none';
+      });
+    }, 30);
+  }
+
+  function acceptFile(file) {
+    if (!file) return;
+    if (!/pdf$/i.test(file.type) && !/\.pdf$/i.test(file.name)) {
+      setStatus('That is not a PDF. Sides Enlarger needs the PDF your production sent.', true);
+      return;
+    }
+    originalName = file.name.replace(/\.pdf$/i, '');
+    file.arrayBuffer().then(function (buf) {
+      originalBytes = new Uint8Array(buf);
+      curPage = 1;
+      var prevB = docB;
+      return openDoc(originalBytes).then(function (d) {
+        docB = d; if (prevB) prevB.destroy();
+        process();
+      });
+    }).catch(function (e) {
+      setStatus('Could not open this PDF. (' + (e && e.message ? e.message : e) + ')', true);
+    });
+  }
+
+  // drag & drop
+  ['dragenter', 'dragover'].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add('hover'); });
+  });
+  ['dragleave', 'drop'].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove('hover'); });
+  });
+  drop.addEventListener('drop', function (e) {
+    acceptFile(e.dataTransfer.files && e.dataTransfer.files[0]);
+  });
+  drop.addEventListener('click', function () { fileInput.click(); });
+  drop.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') fileInput.click(); });
+  fileInput.addEventListener('change', function () { acceptFile(fileInput.files[0]); });
+
+  // slider
+  var deb = null;
+  slider.addEventListener('input', function () {
+    scaleVal.innerHTML = (+slider.value).toFixed(2) + '&times;';
+    prefs.scale = +slider.value;
+    savePrefs(prefs);
+    clearTimeout(deb);
+    deb = setTimeout(process, 350);
+  });
+
+  // download
+  dlBtn.addEventListener('click', function () {
+    if (!outBlobUrl) return;
+    var a = document.createElement('a');
+    a.href = outBlobUrl;
+    a.download = originalName + ' (enlarged ' + (+slider.value).toFixed(2) + 'x).pdf';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  });
+})();
+</script>
+</body>
+</html>
