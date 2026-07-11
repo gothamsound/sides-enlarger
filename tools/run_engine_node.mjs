@@ -1,5 +1,6 @@
 // Headless engine run:
-//   node tools/run_engine_node.mjs <in.pdf> <out.pdf> [scale] ["NAME=paletteIdx;NAME2=paletteIdx"]
+//   node tools/run_engine_node.mjs <in.pdf> <out.pdf> [scale] ["NAME=paletteIdx;NAME2=paletteIdx"] \
+//        [--mode=page] [--enlarge-only="NAME;NAME2"]
 import { createRequire } from 'module';
 import fs from 'fs';
 import path from 'path';
@@ -12,7 +13,9 @@ const PDFLib = require(path.join(root, 'node_modules/pdf-lib/dist/pdf-lib.js'));
 const pdfjsLib = require(path.join(root, 'node_modules/pdfjs-dist/legacy/build/pdf.js'));
 const createSidesEngine = require(path.join(root, 'engine.js'));
 
-const [inFile, outFile, scaleArg, hlArg] = process.argv.slice(2);
+const argv = process.argv.slice(2);
+const pos = argv.filter(a => !a.startsWith('--'));
+const [inFile, outFile, scaleArg, hlArg] = pos;
 const scale = parseFloat(scaleArg || '1.25');
 const highlights = {};
 if (hlArg) {
@@ -21,12 +24,19 @@ if (hlArg) {
     if (m) highlights[m[1].trim()] = parseInt(m[2], 10);
   }
 }
+let mode = 'dialogue', enlargeOnly = null;
+for (const f of argv.filter(a => a.startsWith('--'))) {
+  if (f === '--mode=page') mode = 'page';
+  else if (f.startsWith('--enlarge-only=')) {
+    enlargeOnly = f.slice('--enlarge-only='.length).split(';').map(s => s.trim()).filter(Boolean);
+  }
+}
 
 const engine = createSidesEngine({ pdfjsLib, PDFLib });
 const bytes = new Uint8Array(fs.readFileSync(inFile));
 
 try {
-  const { bytes: out, report } = await engine.process(bytes, { scale, highlights });
+  const { bytes: out, report } = await engine.process(bytes, { scale, highlights, mode, enlargeOnly });
   fs.writeFileSync(outFile, out);
   fs.writeFileSync(outFile + '.report.json', JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));

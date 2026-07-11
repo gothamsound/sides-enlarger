@@ -8,14 +8,20 @@ A single-file web tool that ingests a screenplay "sides" PDF and outputs a
 for a TV actor reading sides on set. It also extracts the character names
 geometrically and lets the user assign each a translucent highlight color that
 is painted behind that character's blocks (composing with the enlargement).
-All PDF processing happens **in the browser**; there is no backend.
+Enlargement has three modes: all dialogue (default), only selected characters'
+dialogue (`opts.enlargeOnly`), or the whole page zoomed uniformly toward the
+margins (`opts.mode: 'page'`). All PDF processing happens **in the browser**;
+there is no backend.
 
 ## Non-negotiable constraints (do not regress these)
 1. **Page-for-page parity.** Content must never reflow across pages. On set,
-   "page 34" must stay page 34. Enlargement is done by rescaling dialogue text
-   runs in place around each line's own baseline — nothing moves vertically. If a
-   page's enlarged dialogue wouldn't fit, **back off the scale for that page and
-   report it**; never push content onto another page.
+   "page 34" must stay page 34. In dialogue mode, enlargement rescales dialogue
+   text runs in place around each line's own baseline — nothing moves
+   vertically. In whole-page mode the ENTIRE page content is wrapped in one
+   uniform scale-and-recenter transform (nothing inside is rewritten), so
+   parity is structural there too. If enlargement wouldn't fit a page, **back
+   off the scale for that page and report it**; never push content onto
+   another page.
 2. **Confidentiality / offline.** Scripts must never leave the device. No network
    calls, no CDNs, no telemetry, no cloud. Everything (pdf.js, its worker, pdf-lib,
    the engine) is inlined into `index.html`. Keep it that way.
@@ -91,6 +97,14 @@ renderer re-segmenting enlarged lines). It also writes
   stripped, revision `*` stripped, `#`/`/`/function words kept) and aggregated
   with dialogue-line counts. The dialogue-follow test is the noise filter; do
   not weaken it to catch more names.
+- **Modes**: `opts.enlargeOnly` (array of names) gates the in-place scaling per
+  cue-led block: unselected characters' dialogue must stay byte-identical, and
+  the verifier checks it like non-dialogue. `opts.mode: 'page'` skips the
+  rewriter entirely and wraps the page content streams in `q s 0 0 s tx ty cm
+  ... Q` (fit from the text bounding box, horizontally centered, top-anchored,
+  10pt safety edge; watermark extents measured conservatively so nothing ever
+  leaves the sheet). Whole-page zoom is honest but modest on real sides: the
+  vertical box (headers to CONTINUED) is the binding constraint.
 - **Highlighting**: one rounded rect per block of an assigned character,
   painted as a Multiply-blend fill in a content stream APPENDED after the page
   content (so white background fills inside forms can't hide it; glyphs stay

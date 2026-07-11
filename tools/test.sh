@@ -38,6 +38,18 @@ run_one () {
   done
 }
 
+check_one () {  # src outpdf label renderdir
+  local src="$1" outpdf="$2" label="$3" rdir="$4"
+  if CHECK_RENDER_DIR="$rdir" python3 tools/check.py "$src" "$outpdf" "${outpdf}.report.json" \
+       | grep -q '^PASS'; then
+    echo "    [$label] PASS"
+  else
+    echo "    [$label] FAIL"
+    CHECK_RENDER_DIR="$rdir" python3 tools/check.py "$src" "$outpdf" "${outpdf}.report.json" | grep '  - ' || true
+    fail=1
+  fi
+}
+
 echo "==> testing fixture"
 run_one out/fixture.pdf fixture
 
@@ -71,6 +83,30 @@ for scale in 1.0 1.25; do
   fi
 done
 
+echo "==> fixture: selective enlargement (only LAURA; highlight on unenlarged MERC #1)"
+node tools/run_engine_node.mjs out/fixture.pdf out/fixture.sel.pdf 1.25 'MERC #1=2' --enlarge-only='LAURA' \
+  >/dev/null 2>out/fixture.sel.err || { echo "    [selective] ENGINE ERROR:"; cat out/fixture.sel.err; fail=1; }
+check_one out/fixture.pdf out/fixture.sel.pdf "selective @ 1.25" "$RENDER_DIR/fixture_sel"
+
+echo "==> fixture: whole-page mode"
+node tools/run_engine_node.mjs out/fixture.pdf out/fixture.page.pdf 1.5 'LAURA=0' --mode=page \
+  >/dev/null 2>out/fixture.page.err || { echo "    [page mode] ENGINE ERROR:"; cat out/fixture.page.err; fail=1; }
+check_one out/fixture.pdf out/fixture.page.pdf "page mode @ 1.5" "$RENDER_DIR/fixture_page"
+
+# real sides: whole-page mode + selective enlargement of the top character
+run_modes () {
+  local src="$1" tag="$2"
+  node tools/run_engine_node.mjs "$src" "out/${tag}.page.pdf" 1.25 "" --mode=page \
+    >/dev/null 2>"out/${tag}.page.err" || { echo "    [$tag page mode] ENGINE ERROR:"; cat "out/${tag}.page.err"; fail=1; return; }
+  check_one "$src" "out/${tag}.page.pdf" "$tag page mode" "$RENDER_DIR/${tag}_page"
+  local top
+  top=$(python3 -c "import json;r=json.load(open('out/${tag}.1.25.pdf.report.json'));cs=[c for c in r.get('characters',[]) if c.get('lines')];print(cs[0]['name'] if cs else '')" 2>/dev/null || true)
+  [ -z "$top" ] && return
+  node tools/run_engine_node.mjs "$src" "out/${tag}.sel.pdf" 1.25 "${top}=0" --enlarge-only="$top" \
+    >/dev/null 2>"out/${tag}.sel.err" || { echo "    [$tag selective] ENGINE ERROR:"; cat "out/${tag}.sel.err"; fail=1; return; }
+  check_one "$src" "out/${tag}.sel.pdf" "$tag selective '$top'" "$RENDER_DIR/${tag}_sel"
+}
+
 # real sides: also verify highlighting the most-talkative extracted character
 run_hl () {
   local src="$1" tag="$2"
@@ -96,6 +132,7 @@ for real in "$@"; do
   echo "==> testing real: $name"
   run_one "$real" "real_${name}"
   run_hl "$real" "real_${name}"
+  run_modes "$real" "real_${name}"
 done
 
 echo

@@ -28,6 +28,17 @@ production scripts never leave the device.
 There's a **size slider** (1.0× – 1.5×) if you want it bigger or smaller. It
 remembers your setting on that device. You don't have to touch anything else.
 
+A **"Make bigger"** switch picks what grows:
+- **All dialogue** (default): every character's dialogue, in place.
+- **Selected characters**: tap "Aa" next to a name and only that dialogue
+  grows; everyone else's lines stay exactly as printed. Combine freely with
+  highlight colors.
+- **Whole page**: the entire page (action, cues, headers, everything) is
+  zoomed uniformly out toward the paper edges, up to the slider size. How much
+  it can grow depends on the layout; production pages already run close to the
+  top and bottom margins, so the gain is honest but often modest, and pages
+  that hit the margins sooner say so.
+
 ### Highlighting your lines
 After a PDF loads, a **"Highlight characters"** panel lists every speaking
 character it found, biggest part first, with line counts. Tap a color next to a

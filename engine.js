@@ -229,7 +229,7 @@
     const C = dialX + colW / 2;
     let s = requested;
     for (const L of P.lines) {
-      if (L.cls !== 'dialogue') continue;
+      if (L.cls !== 'dialogue' || L.enlarge === false) continue;
       const x0 = L.dx0 != null ? L.dx0 : L.x0;
       const x1 = L.dx1 != null ? L.dx1 : L.x1;
       // left edge: C + s*(x0 - C) >= EDGE
@@ -578,7 +578,7 @@
     const beginScaledIfDialogue = () => {
       if (scaledRun) return; // continuing same run: advances already scaled
       const hit = classifyShow();
-      if (!hit || hit.L.cls !== 'dialogue' || sPage <= 1.001) return;
+      if (!hit || hit.L.cls !== 'dialogue' || hit.L.enlarge === false || sPage <= 1.001) return;
       // Uniform scale about the page's column anchor: x' = C + s*(x - C),
       // anchored on this line's own baseline (nothing moves vertically).
       // Every run on a line gets the same affine map, so multi-run lines
@@ -721,7 +721,7 @@
       if (!B.lines.some(l => l.cls === 'dialogue')) continue;
       let x0 = Infinity, x1 = -Infinity, top = -Infinity, bot = Infinity;
       for (const L of [B.cue, ...B.lines]) {
-        const scaled = L.cls === 'dialogue' && s > 1.001;
+        const scaled = L.cls === 'dialogue' && L.enlarge !== false && s > 1.001;
         const eff = scaled ? s : 1;
         const lx0 = L.dx0 != null ? L.dx0 : L.x0;
         const lx1 = L.dx1 != null ? L.dx1 : L.x1;
@@ -789,6 +789,15 @@
 
       if (totalChars < 40) throw scannedError();
 
+      // mode: 'dialogue' (default) scales dialogue runs in place around their
+      // baselines; 'page' zooms the ENTIRE page uniformly toward the margins.
+      const mode = opts.mode === 'page' ? 'page' : 'dialogue';
+      // optional selective enlargement: only these characters' dialogue grows
+      let enlargeSet = null;
+      if (mode === 'dialogue' && opts.enlargeOnly != null) {
+        enlargeSet = new Set((opts.enlargeOnly || []).map(normalizeCueName).filter(Boolean));
+      }
+
       // requested highlights: { CHARACTER NAME: palette index }
       const hl = {};
       if (opts.highlights) {
@@ -799,26 +808,44 @@
           if (n) hl[n] = idx;
         }
       }
-      const wantHl = Object.keys(hl).length > 0;
 
       const cal = calibrate(pages);
-      const report = { requestedScale: requested, calibration: cal, pages: [], warnings: [] };
-      if (!cal) {
+      const report = { requestedScale: requested, mode, calibration: cal, pages: [], warnings: [] };
+      report.enlargeOnly = enlargeSet ? Array.from(enlargeSet) : null;
+      if (!cal && mode !== 'page') {
         report.warnings.push('Could not locate character cues geometrically — layout too unusual. PDF returned unchanged.');
         report.characters = [];
         return { bytes, report };
       }
+      const wantHl = Object.keys(hl).length > 0 && !!cal;
 
-      // classify + per-page scale
-      const widths = [];
-      for (const P of pages) {
-        classifyPage(P, cal);
-        for (const L of P.lines) if (L.cls === 'dialogue') widths.push((L.dx1 != null ? L.dx1 : L.x1) - (L.dx0 != null ? L.dx0 : L.x0));
+      // classify + per-page scale (page mode still classifies when it can, for
+      // character extraction and highlight geometry)
+      let colW = 0, anchorC = 0;
+      if (cal) {
+        const widths = [];
+        for (const P of pages) {
+          classifyPage(P, cal);
+          for (const L of P.lines) if (L.cls === 'dialogue') widths.push((L.dx1 != null ? L.dx1 : L.x1) - (L.dx0 != null ? L.dx0 : L.x0));
+        }
+        colW = Math.min(300, Math.max(200, quantile(widths, 0.9) || 252));
+        cal.colW = colW;
+        anchorC = cal.dialX + colW / 2; // uniform-scale anchor (see pageScale)
+        report.characters = collectCharacters(pages);
+        if (enlargeSet) {
+          for (const P of pages) {
+            for (const B of (P.blocks || [])) {
+              const on = enlargeSet.has(B.name);
+              for (const L of B.lines) L.enlarge = on;
+            }
+            // defensive: any dialogue line outside a block stays untouched
+            for (const L of P.lines) if (L.cls === 'dialogue' && L.enlarge === undefined) L.enlarge = false;
+          }
+        }
+      } else {
+        report.characters = [];
+        report.warnings.push('Could not locate character cues — whole-page enlargement only; no per-character features.');
       }
-      const colW = Math.min(300, Math.max(200, quantile(widths, 0.9) || 252));
-      cal.colW = colW;
-      const anchorC = cal.dialX + colW / 2; // uniform-scale anchor (see pageScale)
-      report.characters = collectCharacters(pages);
       if (wantHl) {
         report.highlights = {};
         for (const n of Object.keys(hl)) report.highlights[n] = { palette: hl[n], key: PALETTE[hl[n]].key, rgb: PALETTE[hl[n]].rgb };
@@ -921,15 +948,82 @@
         page.node.set(N('Contents'), arr);
       };
 
+      // Whole-page mode: wrap the untouched page content (forms, images,
+      // watermarks, everything) in ONE uniform scale-and-recenter transform.
+      // Nothing inside is rewritten, so parity is structural: the whole page
+      // is a single affine of itself at the original page size.
+      const wrapPageContent = (page, s, tx, ty) => {
+        const pre = ctx.register(ctx.flateStream(bytesOfLatin('q\n' + [s, 0, 0, s, tx, ty].map(fmt).join(' ') + ' cm')));
+        const post = ctx.register(ctx.flateStream(bytesOfLatin('Q')));
+        const cur = page.node.get(N('Contents'));
+        const resolved = ctx.lookup(cur);
+        const arr = ctx.obj([]);
+        arr.push(pre);
+        if (resolved instanceof PDFLib.PDFArray) {
+          for (let k = 0; k < resolved.size(); k++) arr.push(resolved.get(k));
+        } else if (cur) arr.push(cur);
+        arr.push(post);
+        page.node.set(N('Contents'), arr);
+      };
+
+      if (mode === 'page') {
+        const E = 10; // "right to the edge": most printers hold ~this much anyway
+        for (let i = 0; i < pdfPages.length; i++) {
+          const P = pages[i];
+          const page = pdfPages[i];
+          const pageReport = { page: i + 1, appliedScale: requested, warnings: [] };
+          report.pages.push(pageReport);
+          // content bounding box from every text line (watermarks included:
+          // conservative extents, so nothing is ever pushed off the sheet)
+          let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+          for (const L of P.lines) {
+            const size = median(L.items.map(t => t.size)) || 12;
+            minX = Math.min(minX, L.x0); maxX = Math.max(maxX, L.x1);
+            minY = Math.min(minY, L.y - 0.3 * size);
+            maxY = Math.max(maxY, L.y + 0.85 * size);
+          }
+          if (!P.lines.length || !(maxX > minX)) { pageReport.appliedScale = 1; continue; }
+          const s = Math.max(1, Math.floor(Math.min(
+            requested, (P.width - 2 * E) / (maxX - minX), (P.height - 2 * E) / (maxY - minY)) * 100) / 100);
+          pageReport.appliedScale = s;
+          if (s < requested - 0.005) pageReport.warnings.push(`page content reaches the margins at ${s.toFixed(2)}x — applied that instead`);
+          let tx = 0, ty = 0;
+          if (s > 1.001) {
+            tx = P.width / 2 - s * (minX + maxX) / 2;   // center horizontally
+            ty = (P.height - E) - s * maxY;             // keep content top-anchored
+            wrapPageContent(page, s, tx, ty);
+          }
+          pageReport.tx = Math.round(tx * 100) / 100;
+          pageReport.ty = Math.round(ty * 100) / 100;
+
+          if (wantHl) {
+            // highlight rects are computed on original geometry, then mapped
+            // through the same page affine so they land on the zoomed text
+            let rects = highlightRectsForPage(P, cal, 1, hl);
+            if (s > 1.001) rects = rects.map(R => ({ ...R, x: s * R.x + tx, y: s * R.y + ty, w: s * R.w, h: s * R.h }));
+            if (rects.length) {
+              paintHighlights(page, rects);
+              pageReport.highlighted = rects.map(r => r.name);
+            }
+            if ((P.dualNames || []).some(n => hl[n] != null)) {
+              pageReport.warnings.push('a highlighted character appears in a dual-dialogue block on this page — dual dialogue is not highlighted');
+            }
+          }
+        }
+        const outBytes = await pdfDoc.save({ useObjectStreams: false });
+        return { bytes: outBytes, report };
+      }
+
       for (let i = 0; i < pdfPages.length; i++) {
         const P = pages[i];
         const page = pdfPages[i];
         const pageReport = { page: i + 1, appliedScale: requested, dialogueLines: P.lines.filter(l => l.cls === 'dialogue').length, warnings: [] };
         report.pages.push(pageReport);
         if (P.hasDual) pageReport.warnings.push('dual-dialogue block detected — left at original size');
-        if (!pageReport.dialogueLines) pageReport.appliedScale = 1;
+        pageReport.enlargedLines = P.lines.filter(l => l.cls === 'dialogue' && l.enlarge !== false).length;
+        if (!pageReport.enlargedLines) pageReport.appliedScale = 1;
 
-        if (pageReport.dialogueLines) {
+        if (pageReport.enlargedLines) {
           const s = pageScale(P, requested, colW, cal.dialX);
           pageReport.appliedScale = s;
           if (s < requested - 0.005) pageReport.warnings.push(`enlarged dialogue would not fit — backed off to ${s.toFixed(2)}x on this page`);

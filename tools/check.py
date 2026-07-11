@@ -13,7 +13,12 @@ Asserts:
   5. if the report requested highlights: each assigned character's blocks are
      covered by exactly one rect of that character's color, every word of the
      block sits inside the rect, and no rect covers any other line's text
-  6. renders side-by-side page images to out/compare_pNN.png for eyeballing
+  6. selective mode (report.enlargeOnly): only the listed characters' dialogue
+     scales; everyone else's dialogue is checked as unchanged like non-dialogue
+  7. page mode (report.mode == "page"): every line lands at the reported
+     affine (s*x+tx, s*y+ty) at s times its size; nothing else is asserted
+     about classes since the whole page moves together
+  8. renders side-by-side page images to out/compare_pNN.png for eyeballing
 
 The dialogue classifier here is an independent Python re-implementation of
 the geometric rules (x-band + follows-a-cue), so the engine is checked
@@ -159,7 +164,15 @@ def main():
         fails.append(f"page count differs: {len(b)} vs {len(a)}")
         report_and_exit(fails, notes)
 
-    before_cls = classify_doc(b)
+    mode = (report or {}).get("mode") or "dialogue"
+    sel = (report or {}).get("enlargeOnly")  # None = all dialogue; list = only these
+    try:
+        before_cls = classify_doc(b)
+    except Exception:
+        if mode != "page":
+            raise
+        before_cls = [get_lines(p) for p in b]
+        notes.append("no cues classifiable; page-mode geometric checks only")
     ratios = []
     gap_bad = []
     hl = (report or {}).get("highlights") or {}
@@ -178,6 +191,44 @@ def main():
         alines = get_lines(a[pi])
         aspans = [s for L in alines for s in L["spans"]]
         applied = report["pages"][pi]["appliedScale"] if report else None
+        pinfo = report["pages"][pi] if report else {}
+        s_eff = applied if applied else 1.0
+        pageW = a[pi].rect.width
+        pageH = b[pi].rect.height
+        marginStart = pageW - 80  # exclude right-margin revision marks (*)
+        blocks = collect_blocks(blines)
+        line_name = {}
+        for B in blocks:
+            for L in B["lines"]:
+                line_name[id(L)] = B["name"]
+
+        def line_enlarged(L):
+            if L.get("cls") != "dialogue":
+                return False
+            if sel is None:
+                return True
+            return line_name.get(id(L)) in sel
+
+        if mode == "page":
+            tx = pinfo.get("tx", 0.0) or 0.0
+            ty = pinfo.get("ty", 0.0) or 0.0
+            tyf = pageH * (1.0 - s_eff) - ty  # PDF-space ty -> pymupdf top-down
+
+            def ymap(L):
+                return s_eff * L["y"] + tyf
+
+            def xspan(L):
+                return (s_eff * L["x0"] + tx, s_eff * L["x1"] + tx)
+        else:
+            def ymap(L):
+                return L["y"]
+
+            def xspan(L):
+                if line_enlarged(L) and s_eff > 1.001:
+                    calib = (report or {}).get("calibration") or {}
+                    C = calib.get("dialX", 180) + calib.get("colW", 252) / 2.0
+                    return (C + s_eff * (L["x0"] - C), C + s_eff * (min(L["x1"], marginStart) - C))
+                return (L["x0"], L["x1"])
 
         # --- (a) no text lost: page-level word multiset must be preserved.
         # Robust to renderer re-segmenting enlarged dialogue into different spans.
@@ -190,9 +241,13 @@ def main():
             for t, n in list(extra.items())[:3]:
                 fails.append(f"p{pi+1}: text ADDED: {t[:40]!r} x{n}")
 
-        # --- (b) non-dialogue spans: byte-identical stream => exact position/size.
-        for L in blines:
-            if L["cls"] not in ("other", "cue", "dual", "more"):
+        # --- (b) unchanged spans: byte-identical stream => exact position/size.
+        # In selective mode, dialogue of unselected characters must also stay
+        # untouched. Skipped in page mode (everything moves by the affine).
+        for L in (blines if mode != "page" else []):
+            keep = (L.get("cls") in ("other", "cue", "dual", "more")
+                    or (L.get("cls") == "dialogue" and not line_enlarged(L)))
+            if not keep:
                 continue
             for sp in L["spans"]:
                 cands = [t for t in aspans if t["text"] == sp["text"] and abs(t["y"] - sp["y"]) <= 2.5]
@@ -211,18 +266,14 @@ def main():
                     fails.append(f"p{pi+1}: non-dialogue resized {sp['text'][:30]!r} "
                                  f"{sp['size']:.2f}->{m['size']:.2f}")
 
-        # --- (c) dialogue: measure enlargement at line level (re-seg tolerant).
-        pageW = a[pi].rect.width
-        marginStart = pageW - 80  # exclude right-margin revision marks (*)
-
         # --- (c2) kerning fidelity: word gaps must scale uniformly. On
         # word-per-op / glyph-per-op PDFs a per-run anchor would leave gaps
         # at original size while glyphs grow — this catches that regression.
-        if applied is not None and applied > 1.001:
+        if mode != "page" and applied is not None and applied > 1.001:
             bwords = b[pi].get_text("words")
             awords = a[pi].get_text("words")
             for L in blines:
-                if L["cls"] != "dialogue":
+                if not line_enlarged(L):
                     continue
                 bw = sorted(w for w in bwords if abs(w[3] - L["y"]) <= 5.0 and w[0] < marginStart)
                 aw = sorted(w for w in awords if abs(w[3] - L["y"]) <= 5.0 and w[0] < marginStart)
@@ -239,20 +290,49 @@ def main():
                         gap_bad.append(f"p{pi+1}: gap {bw[k][4]!r}->{bw[k+1][4]!r} "
                                        f"{bgap:.2f} -> {agap:.2f} (expected {applied*bgap:.2f})")
 
-        for L in blines:
-            if L["cls"] != "dialogue":
-                continue
-            bsize = statistics.median([s["size"] for s in L["spans"] if s["x0"] < marginStart] or [s["size"] for s in L["spans"]])
-            # after spans sharing this baseline, excluding margin marks
-            same = [t for t in aspans if abs(t["y"] - L["y"]) <= 1.0 and t["x0"] < marginStart]
-            if not same:
-                fails.append(f"p{pi+1}: dialogue baseline vanished at y={L['y']:.1f}: {L['text'][:30]!r}")
-                continue
-            asize = statistics.median([t["size"] for t in same])
-            r = asize / bsize
-            ratios.append(r)
-            if applied is not None and abs(r - applied) > 0.03:
-                fails.append(f"p{pi+1}: dialogue scale {r:.3f} != applied {applied} at y={L['y']:.1f}")
+        if mode == "page":
+            # --- (e) whole-page zoom: every SPAN maps to (s*x+tx, s*y+ty) at
+            # s times its size. Span-level, because line clustering tolerates
+            # a ~2pt intra-line y spread that the zoom then amplifies; the
+            # affine itself is exact per span. Candidates may be merged or
+            # split relative to the original span, so coverage is one-sided.
+            for L in blines:
+                for sp in L["spans"]:
+                    ey = s_eff * sp["y"] + tyf
+                    ex0 = s_eff * sp["x0"] + tx
+                    ex1 = s_eff * sp["x1"] + tx
+                    cands = [t for t in aspans
+                             if abs(t["y"] - ey) <= 1.0
+                             and t["x0"] < ex1 - 0.5 and t["x1"] > ex0 + 0.5]
+                    if not cands:
+                        fails.append(f"p{pi+1}: span not at mapped position y={ey:.1f}: {sp['text'][:25]!r}")
+                        continue
+                    ax0 = min(t["x0"] for t in cands)
+                    ax1 = max(t["x1"] for t in cands)
+                    if ax0 - ex0 > 1.5 or ex1 - ax1 > 2.5:
+                        fails.append(f"p{pi+1}: span extent off after zoom y={ey:.1f}: "
+                                     f"[{ax0:.1f},{ax1:.1f}] vs [{ex0:.1f},{ex1:.1f}] {sp['text'][:20]!r}")
+                    r = statistics.median([t["size"] for t in cands]) / sp["size"]
+                    ratios.append(r)
+                    if abs(r - s_eff) > 0.04:
+                        fails.append(f"p{pi+1}: page-zoom size ratio {r:.3f} != {s_eff} "
+                                     f"at y={ey:.1f}: {sp['text'][:20]!r}")
+        else:
+            # --- (c) enlarged dialogue: line-level scale + unmoved baseline.
+            for L in blines:
+                if not line_enlarged(L):
+                    continue
+                bsize = statistics.median([s["size"] for s in L["spans"] if s["x0"] < marginStart] or [s["size"] for s in L["spans"]])
+                # after spans sharing this baseline, excluding margin marks
+                same = [t for t in aspans if abs(t["y"] - L["y"]) <= 1.0 and t["x0"] < marginStart]
+                if not same:
+                    fails.append(f"p{pi+1}: dialogue baseline vanished at y={L['y']:.1f}: {L['text'][:30]!r}")
+                    continue
+                asize = statistics.median([t["size"] for t in same])
+                r = asize / bsize
+                ratios.append(r)
+                if applied is not None and abs(r - applied) > 0.03:
+                    fails.append(f"p{pi+1}: dialogue scale {r:.3f} != applied {applied} at y={L['y']:.1f}")
 
         # off-page check
         pw = a[pi].rect.width
@@ -264,10 +344,6 @@ def main():
         # (cue + parentheticals + dialogue), cover every word of them, and
         # never touch anyone else's text.
         if hl:
-            blocks = collect_blocks(blines)
-            calib = (report or {}).get("calibration") or {}
-            C = calib.get("dialX", 180) + calib.get("colW", 252) / 2.0
-            s_eff = applied if applied else 1.0
             rects_by_name = {}
             for d in a[pi].get_drawings():
                 f = d.get("fill")
@@ -278,9 +354,10 @@ def main():
                     if all(abs(f[j] - rgb[j]) < 0.02 for j in range(3)):
                         rects_by_name.setdefault(name, []).append(d["rect"])
             awords = a[pi].get_text("words")
+            wcut = (s_eff * marginStart + (pinfo.get("tx", 0.0) or 0.0)) if mode == "page" else marginStart
             for name, info in hl.items():
                 myblocks = [B for B in blocks if B["name"] == name
-                            and any(l["cls"] == "dialogue" for l in B["lines"])]
+                            and any(l.get("cls") == "dialogue" for l in B["lines"])]
                 rects = rects_by_name.get(name, [])
                 if len(rects) != len(myblocks):
                     fails.append(f"p{pi+1}: highlight {name!r}: {len(myblocks)} blocks vs {len(rects)} rects")
@@ -288,31 +365,29 @@ def main():
                 for B in myblocks:
                     blk_lines = [B["cue"]] + B["lines"]
                     mine.update(id(L) for L in blk_lines)
-                    ys = [L["y"] for L in blk_lines]
+                    ys = [ymap(L) for L in blk_lines]
                     cover = next((r for r in rects if all(r.y0 <= yy <= r.y1 for yy in ys)), None)
                     if cover is None:
                         fails.append(f"p{pi+1}: highlight {name!r}: block at y={ys[0]:.0f} has no covering rect")
                         continue
                     for L in blk_lines:
+                        ey = ymap(L)
                         for w in awords:
-                            if abs(w[3] - L["y"]) <= 5.0 and w[0] < marginStart:
+                            if abs(w[3] - ey) <= 5.0 and w[0] < wcut:
                                 if w[0] < cover.x0 - 1 or w[2] > cover.x1 + 1:
                                     fails.append(f"p{pi+1}: highlight {name!r}: word {w[4]!r} "
-                                                 f"outside rect at y={L['y']:.0f}")
+                                                 f"outside rect at y={ey:.0f}")
                 for r in rects:
                     for L in blines:
                         if id(L) in mine:
                             continue
-                        if not (r.y0 + 2 < L["y"] < r.y1 - 2):
+                        ey = ymap(L)
+                        if not (r.y0 + 2 < ey < r.y1 - 2):
                             continue
-                        if L["cls"] == "dialogue" and s_eff > 1.001:
-                            fx0 = C + s_eff * (L["x0"] - C)
-                            fx1 = C + s_eff * (min(L["x1"], marginStart) - C)
-                        else:
-                            fx0, fx1 = L["x0"], L["x1"]
+                        fx0, fx1 = xspan(L)
                         if fx1 > r.x0 + 2 and fx0 < r.x1 - 2:
                             fails.append(f"p{pi+1}: highlight {name!r} rect covers foreign line "
-                                         f"{L['text'][:30]!r} at y={L['y']:.0f}")
+                                         f"{L['text'][:30]!r} at y={ey:.0f}")
 
     if len(gap_bad) > 2:
         fails.append(f"kerning: {len(gap_bad)} word gaps deviate from uniform scaling")
@@ -323,7 +398,7 @@ def main():
     requested = report["requestedScale"] if report else 1.25
     backoffs = [p for p in (report["pages"] if report else []) if p["appliedScale"] < requested - 0.005]
     # Only require real enlargement when the user actually asked for it (>1.05x).
-    if requested > 1.05 and ratios and med < 1.2 and not backoffs:
+    if requested > 1.05 and ratios and med < min(1.2, requested - 0.03) and not backoffs:
         fails.append(f"median dialogue ratio {med:.3f} < 1.2 with no reported back-off")
     if backoffs:
         notes.append("reported back-off pages: " + ", ".join(f"p{p['page']}={p['appliedScale']}" for p in backoffs))
