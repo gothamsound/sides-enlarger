@@ -8,7 +8,12 @@ Asserts:
   2. every non-dialogue span is unchanged in position (<= 0.7pt) and size
   3. dialogue spans: baseline unchanged, size ratio == page's applied scale
      (median over doc >= 1.2x unless pages backed off)
-  4. renders side-by-side page images to out/compare_pNN.png for eyeballing
+  4. kerning fidelity: word gaps inside dialogue lines scale uniformly with
+     the applied scale (multi-run lines must not crowd or overlap)
+  5. if the report requested highlights: each assigned character's blocks are
+     covered by exactly one rect of that character's color, every word of the
+     block sits inside the rect, and no rect covers any other line's text
+  6. renders side-by-side page images to out/compare_pNN.png for eyeballing
 
 The dialogue classifier here is an independent Python re-implementation of
 the geometric rules (x-band + follows-a-cue), so the engine is checked
@@ -76,6 +81,30 @@ def is_cue(L, lo, hi):
             and not re.search(r"(CUT TO|FADE (IN|OUT)|DISSOLVE)", L["text"]))
 
 
+def norm_cue(t):
+    """mirror of the engine's normalizeCueName"""
+    t = re.sub(r"\*", " ", t or "")
+    t = re.sub(r"\s*\([^)]*\)", " ", t)          # (CONT'D) (V.O.) etc.
+    t = re.sub(r"[.,:;]+\s*$", "", t)
+    return re.sub(r"\s+", " ", t).strip().upper()
+
+
+def collect_blocks(lines):
+    """cue-led blocks from an already-classified page, mirroring the engine"""
+    blocks, cur = [], None
+    for L in lines:
+        c = L.get("cls")
+        if c == "cue":
+            cur = {"name": norm_cue(L["text"]), "cue": L, "lines": []}
+            blocks.append(cur)
+        elif c in ("dialogue", "more"):
+            if cur:
+                cur["lines"].append(L)
+        else:
+            cur = None
+    return blocks
+
+
 def classify_doc(doc):
     pages_lines = [get_lines(p) for p in doc]
     cue_xs = [L["x0"] for lines in pages_lines for L in lines if is_cue(L, 200, 340)]
@@ -86,7 +115,8 @@ def classify_doc(doc):
         for i, L in enumerate(lines):
             if is_cue(L, cue_x - 12, cue_x + 12) and i + 1 < len(lines):
                 nxt = lines[i + 1]
-                if nxt["y"] - L["y"] < 3 * LEAD and cue_x - 130 < nxt["x0"] < cue_x - 30:
+                if (nxt["y"] - L["y"] < 3 * LEAD and cue_x - 130 < nxt["x0"] < cue_x - 30
+                        and not nxt["text"].strip().startswith("(")):
                     dial_xs.append(nxt["x0"])
     dial_x = statistics.median(dial_xs)
     paren_xs = [L["x0"] for lines in pages_lines for L in lines
@@ -131,6 +161,8 @@ def main():
 
     before_cls = classify_doc(b)
     ratios = []
+    gap_bad = []
+    hl = (report or {}).get("highlights") or {}
 
     def wordbag(page):
         import collections
@@ -182,6 +214,31 @@ def main():
         # --- (c) dialogue: measure enlargement at line level (re-seg tolerant).
         pageW = a[pi].rect.width
         marginStart = pageW - 80  # exclude right-margin revision marks (*)
+
+        # --- (c2) kerning fidelity: word gaps must scale uniformly. On
+        # word-per-op / glyph-per-op PDFs a per-run anchor would leave gaps
+        # at original size while glyphs grow — this catches that regression.
+        if applied is not None and applied > 1.001:
+            bwords = b[pi].get_text("words")
+            awords = a[pi].get_text("words")
+            for L in blines:
+                if L["cls"] != "dialogue":
+                    continue
+                bw = sorted(w for w in bwords if abs(w[3] - L["y"]) <= 5.0 and w[0] < marginStart)
+                aw = sorted(w for w in awords if abs(w[3] - L["y"]) <= 5.0 and w[0] < marginStart)
+                if len(bw) < 2:
+                    continue
+                if len(aw) != len(bw):
+                    if "".join(w[4] for w in bw) == "".join(w[4] for w in aw):
+                        gap_bad.append(f"p{pi+1}: words merged/re-split after enlargement at y={L['y']:.1f}")
+                    continue
+                for k in range(len(bw) - 1):
+                    bgap = bw[k + 1][0] - bw[k][2]
+                    agap = aw[k + 1][0] - aw[k][2]
+                    if abs(agap - applied * bgap) > 1.2:
+                        gap_bad.append(f"p{pi+1}: gap {bw[k][4]!r}->{bw[k+1][4]!r} "
+                                       f"{bgap:.2f} -> {agap:.2f} (expected {applied*bgap:.2f})")
+
         for L in blines:
             if L["cls"] != "dialogue":
                 continue
@@ -202,6 +259,64 @@ def main():
         for L in alines:
             if L["x1"] > pw - 3 or L["x0"] < 3:
                 fails.append(f"p{pi+1}: text off page edge x0={L['x0']:.0f} x1={L['x1']:.0f}: {L['text'][:30]!r}")
+
+        # --- (d) highlights: rects land on the assigned character's blocks
+        # (cue + parentheticals + dialogue), cover every word of them, and
+        # never touch anyone else's text.
+        if hl:
+            blocks = collect_blocks(blines)
+            calib = (report or {}).get("calibration") or {}
+            C = calib.get("dialX", 180) + calib.get("colW", 252) / 2.0
+            s_eff = applied if applied else 1.0
+            rects_by_name = {}
+            for d in a[pi].get_drawings():
+                f = d.get("fill")
+                if not f:
+                    continue
+                for name, info in hl.items():
+                    rgb = info["rgb"]
+                    if all(abs(f[j] - rgb[j]) < 0.02 for j in range(3)):
+                        rects_by_name.setdefault(name, []).append(d["rect"])
+            awords = a[pi].get_text("words")
+            for name, info in hl.items():
+                myblocks = [B for B in blocks if B["name"] == name
+                            and any(l["cls"] == "dialogue" for l in B["lines"])]
+                rects = rects_by_name.get(name, [])
+                if len(rects) != len(myblocks):
+                    fails.append(f"p{pi+1}: highlight {name!r}: {len(myblocks)} blocks vs {len(rects)} rects")
+                mine = set()
+                for B in myblocks:
+                    blk_lines = [B["cue"]] + B["lines"]
+                    mine.update(id(L) for L in blk_lines)
+                    ys = [L["y"] for L in blk_lines]
+                    cover = next((r for r in rects if all(r.y0 <= yy <= r.y1 for yy in ys)), None)
+                    if cover is None:
+                        fails.append(f"p{pi+1}: highlight {name!r}: block at y={ys[0]:.0f} has no covering rect")
+                        continue
+                    for L in blk_lines:
+                        for w in awords:
+                            if abs(w[3] - L["y"]) <= 5.0 and w[0] < marginStart:
+                                if w[0] < cover.x0 - 1 or w[2] > cover.x1 + 1:
+                                    fails.append(f"p{pi+1}: highlight {name!r}: word {w[4]!r} "
+                                                 f"outside rect at y={L['y']:.0f}")
+                for r in rects:
+                    for L in blines:
+                        if id(L) in mine:
+                            continue
+                        if not (r.y0 + 2 < L["y"] < r.y1 - 2):
+                            continue
+                        if L["cls"] == "dialogue" and s_eff > 1.001:
+                            fx0 = C + s_eff * (L["x0"] - C)
+                            fx1 = C + s_eff * (min(L["x1"], marginStart) - C)
+                        else:
+                            fx0, fx1 = L["x0"], L["x1"]
+                        if fx1 > r.x0 + 2 and fx0 < r.x1 - 2:
+                            fails.append(f"p{pi+1}: highlight {name!r} rect covers foreign line "
+                                         f"{L['text'][:30]!r} at y={L['y']:.0f}")
+
+    if len(gap_bad) > 2:
+        fails.append(f"kerning: {len(gap_bad)} word gaps deviate from uniform scaling")
+        fails.extend("  " + g for g in gap_bad[:8])
 
     med = statistics.median(ratios) if ratios else 0
     notes.append(f"dialogue lines checked: {len(ratios)}, median size ratio {med:.3f}")

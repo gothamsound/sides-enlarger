@@ -6,19 +6,21 @@
 <meta name="robots" content="noindex, nofollow">
 <title>Sides Enlarger</title>
 <style>
-  :root { --ink:#1a1a1a; --paper:#faf8f4; --accent:#2f6f4f; --warn:#a05a00; --err:#b3261e; }
+  :root { --ink:#1a1a1a; --paper:#faf8f4; --accent:#6d6f1c; --accentSoft:#eef0d8; --warn:#a05a00; --err:#b3261e; }
   * { box-sizing: border-box; }
   body { margin:0; font: 16px/1.45 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
          color:var(--ink); background:var(--paper); padding:24px 16px 60px; }
-  main { max-width: 980px; margin: 0 auto; }
+  main { max-width: 1180px; margin: 0 auto; }
+  header.brand { display:flex; align-items:center; gap:20px; margin-bottom:16px; }
+  header.brand img { width:180px; height:auto; display:block; flex:none; }
   h1 { font-size: 26px; margin: 0 0 2px; }
   h1 .mono { font-family: "Courier New", monospace; }
-  .sub { color:#666; margin:0 0 18px; font-size:14px; }
-  .who { display:inline-block; background:#e8efe9; color:var(--accent); border-radius:12px;
+  .sub { color:#666; margin:0; font-size:14px; }
+  .who { display:inline-block; background:var(--accentSoft); color:var(--accent); border-radius:12px;
          padding:1px 10px; font-size:13px; margin-left:8px; vertical-align:middle; }
   #drop { border:2.5px dashed #b9b2a6; border-radius:14px; padding:44px 20px; text-align:center;
           background:#fff; cursor:pointer; transition:border-color .15s, background .15s; }
-  #drop.hover { border-color:var(--accent); background:#f0f6f2; }
+  #drop.hover { border-color:var(--accent); background:#f6f7e8; }
   #drop strong { font-size:19px; }
   #drop p { margin:6px 0 0; color:#777; font-size:14px; }
   .controls { display:flex; align-items:center; gap:16px; margin:20px 0 6px; flex-wrap:wrap; }
@@ -32,7 +34,32 @@
   #status.err { color:var(--err); font-weight:600; }
   ul#warnings { margin:6px 0 0; padding-left:20px; color:var(--warn); font-size:14px; }
   ul#warnings li { margin:2px 0; }
-  .previews { display:none; margin-top:18px; }
+  .workspace { display:grid; grid-template-columns:minmax(270px,330px) 1fr; gap:18px; align-items:start; margin-top:16px; }
+  @media (max-width:900px){ .workspace { display:block; } #charRail { margin-bottom:16px; } }
+  #charRail { display:none; background:#fff; border:1px solid #e3ded2; border-radius:12px; padding:14px 14px 16px; }
+  #charRail.on { display:block; }
+  #charRail h2 { margin:0 0 4px; font-size:15px; }
+  .railHint { color:#777; font-size:13px; margin:0 0 8px; }
+  .chRow { padding:9px 0 11px; border-top:1px solid #f0ece2; }
+  .chRow.minor .chName, .chRow.minor .chMeta { opacity:.55; }
+  .chTop { display:flex; align-items:baseline; gap:8px; }
+  .chName { font-weight:700; font-size:14px; overflow-wrap:anywhere; }
+  .chMeta { color:#888; font-size:12px; flex:1; }
+  .chHide { border:0; background:none; color:#bbb; font-size:17px; cursor:pointer; padding:2px 6px; line-height:1; }
+  .chHide:hover { color:var(--err); }
+  .swRow { display:flex; gap:7px; margin-top:7px; flex-wrap:wrap; }
+  .sw { width:30px; height:30px; border-radius:50%; border:1.5px solid rgba(0,0,0,.15); cursor:pointer;
+        font-size:15px; line-height:1; display:flex; align-items:center; justify-content:center; padding:0; }
+  .sw.none { background:#fff; color:#999; }
+  .sw.sel { border-color:#1a1a1a; font-weight:700; }
+  .chAdd { display:flex; gap:8px; margin-top:12px; }
+  .chAdd input { flex:1; min-width:0; padding:9px 10px; border:1px solid #ccc; border-radius:8px;
+                 font-size:14px; text-transform:uppercase; }
+  .chAdd button { padding:9px 14px; border:1px solid var(--accent); background:#fff; color:var(--accent);
+                  border-radius:8px; font-weight:700; cursor:pointer; }
+  #chHiddenToggle { margin-top:10px; border:0; background:none; color:#999; text-decoration:underline;
+                    cursor:pointer; font-size:13px; padding:0; }
+  .previews { display:none; min-width:0; }
   .previews.on { display:block; }
   .pager { display:flex; align-items:center; justify-content:center; gap:14px; margin-bottom:10px; }
   .pager button { padding:8px 16px; font-size:16px; border:1px solid #ccc; background:#fff;
@@ -43,15 +70,29 @@
   .pv { flex:1; min-width:0; }
   .pv h3 { margin:0 0 6px; font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:#888; }
   .pv canvas { width:100%; height:auto; border:1px solid #ddd; border-radius:8px; background:#fff; display:block; }
+  #donate { margin-top:34px; text-align:center; background:#fff; border:1px solid #e3ded2; border-radius:12px;
+            padding:18px 16px; }
+  #donate p { margin:0 0 12px; color:#555; font-size:14px; }
+  #donate a { display:inline-block; padding:12px 22px; background:var(--accent); color:#fff; border-radius:10px;
+              font-weight:700; text-decoration:none; font-size:15px; }
+  #donate a:hover { filter:brightness(1.08); }
   footer { margin-top:26px; color:#999; font-size:13px; text-align:center; }
   @media (max-width:760px){ .pvRow { flex-direction:column; } }
+  @media (max-width:600px){ header.brand { flex-direction:column; align-items:flex-start; gap:10px; }
+                            header.brand img { width:150px; } }
 </style>
 </head>
 <body>
 <main>
-  <h1><span class="mono">SIDES ENLARGER</span><span id="who" class="who" hidden></span></h1>
-  <p class="sub">Drop today's sides. Dialogue comes back bigger — same pages, same everything else.
-     Your script never leaves this device.</p>
+  <header class="brand">
+    <img alt="Gotham Sound" src="data:image/png;base64,__LOGO_B64__">
+    <div>
+      <h1><span class="mono">SIDES ENLARGER</span><span id="who" class="who" hidden></span></h1>
+      <p class="sub">Drop today's sides. Dialogue comes back bigger, and you can highlight each
+         character's lines in their own color. Same pages, same everything else.
+         Your script never leaves this device.</p>
+    </div>
+  </header>
 
   <div id="drop" tabindex="0" role="button" aria-label="Choose a PDF">
     <strong>Drop your sides PDF here</strong>
@@ -70,17 +111,38 @@
 
   <button id="download">Download enlarged PDF</button>
 
-  <div class="previews" id="previews">
-    <div class="pager">
-      <button id="prevPg" aria-label="previous page">&#8592;</button>
-      <span id="pageNo">1 / 1</span>
-      <button id="nextPg" aria-label="next page">&#8594;</button>
-    </div>
-    <div class="pvRow">
-      <div class="pv"><h3>Original</h3><canvas id="pvBefore"></canvas></div>
-      <div class="pv"><h3>Enlarged</h3><canvas id="pvAfter"></canvas></div>
+  <div class="workspace">
+    <aside id="charRail" aria-label="Highlight characters">
+      <h2>Highlight characters</h2>
+      <p class="railHint">Tap a color to highlight that character's lines (cue, parentheticals
+         and dialogue). Highlight some, all or none. Colors are remembered on this device for
+         the run of the show.</p>
+      <div id="charList"></div>
+      <div class="chAdd">
+        <input id="chAddName" placeholder="Add a missed name&hellip;" maxlength="40" aria-label="Add a character name">
+        <button id="chAddBtn" type="button">Add</button>
+      </div>
+      <button id="chHiddenToggle" type="button" hidden></button>
+    </aside>
+
+    <div class="previews" id="previews">
+      <div class="pager">
+        <button id="prevPg" aria-label="previous page">&#8592;</button>
+        <span id="pageNo">1 / 1</span>
+        <button id="nextPg" aria-label="next page">&#8594;</button>
+      </div>
+      <div class="pvRow">
+        <div class="pv"><h3>Original</h3><canvas id="pvBefore"></canvas></div>
+        <div class="pv"><h3>Enlarged</h3><canvas id="pvAfter"></canvas></div>
+      </div>
     </div>
   </div>
+
+  <section id="donate">
+    <p>If this is working for you, please consider donating.</p>
+    <a href="https://give.entertainmentcommunity.org/site/Donation2?df_id=12678&amp;12678.donation=form1&amp;mfc_pref=T"
+       target="_blank" rel="noopener noreferrer">Donate to the Entertainment Community Fund</a>
+  </section>
 
   <footer>Everything runs in your browser — no uploads, no accounts, no tracking.</footer>
 </main>
@@ -107,6 +169,7 @@
   }
 
   var engine = createSidesEngine({ pdfjsLib: pdfjs, PDFLib: window.PDFLib });
+  var PALETTE = engine.PALETTE;
 
   // ---- who am I: #laura -> per-person preferences (nothing else is stored) ----
   function personKey() {
@@ -142,13 +205,166 @@
   var prevPg = document.getElementById('prevPg');
   var nextPg = document.getElementById('nextPg');
   var pageNo = document.getElementById('pageNo');
+  var charRail = document.getElementById('charRail');
+  var charList = document.getElementById('charList');
+  var chAddName = document.getElementById('chAddName');
+  var chAddBtn = document.getElementById('chAddBtn');
+  var chHiddenToggle = document.getElementById('chHiddenToggle');
 
   var prefs = loadPrefs();
   if (prefs.scale >= 1 && prefs.scale <= 1.5) slider.value = prefs.scale;
   scaleVal.innerHTML = (+slider.value).toFixed(2) + '&times;';
+  prefs.charColors = prefs.charColors || {};   // NAME -> palette index
+  prefs.hiddenChars = prefs.hiddenChars || []; // names unticked as junk
+  prefs.manualNames = prefs.manualNames || []; // names the user typed in
 
   var originalBytes = null, originalName = 'sides.pdf';
   var outBlobUrl = null, busy = false, queued = false;
+  var lastChars = [];        // characters from the last engine report
+  var showHidden = false;
+
+  // ---- character rail ----
+  function railNorm(n) { return String(n || '').toUpperCase().replace(/\s+/g, ' ').trim(); }
+  function isHidden(n) { return prefs.hiddenChars.indexOf(n) !== -1; }
+
+  function charModel() {
+    // detected characters (engine order: most lines first), then manual ones
+    var seen = {}, list = [];
+    lastChars.forEach(function (c) { seen[c.name] = true; list.push(c); });
+    prefs.manualNames.forEach(function (n) {
+      if (!seen[n]) list.push({ name: n, lines: 0, blocks: 0, dual: false, manual: true });
+    });
+    return list;
+  }
+
+  function metaLabel(c) {
+    if (c.manual) return 'added by you';
+    var bits = [];
+    if (c.lines === 0) bits.push('no dialogue found');
+    else bits.push(c.lines === 1 ? '1 line' : c.lines + ' lines');
+    if (c.dual) bits.push('dual dialogue');
+    return bits.join(' · ');
+  }
+
+  function swatchRow(c) {
+    var row = document.createElement('div');
+    row.className = 'swRow';
+    var noneBtn = document.createElement('button');
+    noneBtn.type = 'button';
+    noneBtn.className = 'sw none' + (prefs.charColors[c.name] == null ? ' sel' : '');
+    noneBtn.title = 'no highlight';
+    noneBtn.textContent = prefs.charColors[c.name] == null ? '✓' : '∅';
+    noneBtn.addEventListener('click', function () { assignColor(c.name, null); });
+    row.appendChild(noneBtn);
+    PALETTE.forEach(function (p, i) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'sw' + (prefs.charColors[c.name] === i ? ' sel' : '');
+      btn.style.background = p.hex;
+      btn.title = p.key;
+      btn.textContent = prefs.charColors[c.name] === i ? '✓' : '';
+      btn.addEventListener('click', function () { assignColor(c.name, i); });
+      row.appendChild(btn);
+    });
+    return row;
+  }
+
+  function renderRail() {
+    if (!originalBytes) return;
+    charRail.className = 'on';
+    charList.innerHTML = '';
+    var model = charModel();
+    var hiddenCount = 0;
+    model.forEach(function (c) {
+      if (isHidden(c.name) && !showHidden) { hiddenCount++; return; }
+      var row = document.createElement('div');
+      row.className = 'chRow' + ((c.lines <= 1 && !c.manual) ? ' minor' : '');
+      var top = document.createElement('div');
+      top.className = 'chTop';
+      var nameEl = document.createElement('span');
+      nameEl.className = 'chName';
+      nameEl.textContent = c.name;
+      var meta = document.createElement('span');
+      meta.className = 'chMeta';
+      meta.textContent = metaLabel(c) + (isHidden(c.name) ? ' · hidden' : '');
+      var hide = document.createElement('button');
+      hide.type = 'button';
+      hide.className = 'chHide';
+      hide.title = isHidden(c.name) ? 'restore' : (c.manual ? 'remove' : 'not a character — hide');
+      hide.textContent = isHidden(c.name) ? '↩' : '×';
+      hide.addEventListener('click', function () { toggleHide(c); });
+      top.appendChild(nameEl); top.appendChild(meta); top.appendChild(hide);
+      row.appendChild(top);
+      if (!isHidden(c.name)) row.appendChild(swatchRow(c));
+      charList.appendChild(row);
+    });
+    if (!model.length) {
+      var p = document.createElement('p');
+      p.className = 'railHint';
+      p.textContent = 'No character cues detected in this PDF. You can still add a name below.';
+      charList.appendChild(p);
+    }
+    var totalHidden = model.filter(function (c) { return isHidden(c.name); }).length;
+    if (totalHidden > 0) {
+      chHiddenToggle.hidden = false;
+      chHiddenToggle.textContent = showHidden ? 'Collapse hidden names' :
+        'Show ' + totalHidden + ' hidden name' + (totalHidden > 1 ? 's' : '');
+    } else chHiddenToggle.hidden = true;
+  }
+
+  function assignColor(name, idx) {
+    var old = prefs.charColors[name];
+    if (idx == null) delete prefs.charColors[name];
+    else {
+      // one color per character: taking someone's color swaps yours back
+      for (var other in prefs.charColors) {
+        if (other !== name && prefs.charColors[other] === idx) {
+          if (old != null) prefs.charColors[other] = old;
+          else delete prefs.charColors[other];
+        }
+      }
+      prefs.charColors[name] = idx;
+    }
+    savePrefs(prefs);
+    renderRail();
+    scheduleProcess();
+  }
+
+  function toggleHide(c) {
+    var i = prefs.hiddenChars.indexOf(c.name);
+    if (i !== -1) prefs.hiddenChars.splice(i, 1);
+    else {
+      if (c.manual) {
+        var mi = prefs.manualNames.indexOf(c.name);
+        if (mi !== -1) prefs.manualNames.splice(mi, 1);
+      } else prefs.hiddenChars.push(c.name);
+      delete prefs.charColors[c.name];
+    }
+    savePrefs(prefs);
+    renderRail();
+    scheduleProcess();
+  }
+
+  chAddBtn.addEventListener('click', function () {
+    var n = railNorm(chAddName.value);
+    if (!n) return;
+    var i = prefs.hiddenChars.indexOf(n);
+    if (i !== -1) prefs.hiddenChars.splice(i, 1);
+    if (prefs.manualNames.indexOf(n) === -1) prefs.manualNames.push(n);
+    chAddName.value = '';
+    savePrefs(prefs);
+    renderRail();
+  });
+  chAddName.addEventListener('keydown', function (e) { if (e.key === 'Enter') chAddBtn.click(); });
+  chHiddenToggle.addEventListener('click', function () { showHidden = !showHidden; renderRail(); });
+
+  function activeHighlights() {
+    var hl = {};
+    for (var name in prefs.charColors) {
+      if (!isHidden(name)) hl[name] = prefs.charColors[name];
+    }
+    return hl;
+  }
 
   // ---- canvas preview (works on iOS/Android where PDF iframes don't) ----
   var docB = null, docA = null, curPage = 1, numPages = 1, renderSeq = 0;
@@ -199,6 +415,19 @@
     });
   }
 
+  function highlightSummary(report) {
+    var hl = report.highlights || {};
+    var names = Object.keys(hl);
+    if (!names.length) return '';
+    var painted = {};
+    (report.pages || []).forEach(function (p) {
+      (p.highlighted || []).forEach(function (n) { painted[n] = true; });
+    });
+    var parts = names.filter(function (n) { return painted[n]; })
+      .map(function (n) { return n + ' (' + hl[n].key + ')'; });
+    return parts.length ? ' Highlighted: ' + parts.join(', ') + '.' : '';
+  }
+
   function process() {
     if (!originalBytes) return;
     if (busy) { queued = true; return; }
@@ -207,11 +436,13 @@
     setStatus('Working… (' + s.toFixed(2) + '×)');
     // yield to paint before heavy work
     setTimeout(function () {
-      engine.process(originalBytes, { scale: s }).then(function (res) {
+      engine.process(originalBytes, { scale: s, highlights: activeHighlights() }).then(function (res) {
         var blob = new Blob([res.bytes], { type: 'application/pdf' });
         if (outBlobUrl) URL.revokeObjectURL(outBlobUrl);
         outBlobUrl = URL.createObjectURL(blob);
         showWarnings(res.report);
+        lastChars = res.report.characters || [];
+        renderRail();
         var prevA = docA;
         return openDoc(res.bytes).then(function (d) {
           docA = d; if (prevA) prevA.destroy();
@@ -223,7 +454,8 @@
       }).then(function (res) {
         if (!res) return;
         var scaled = res.report.pages.filter(function (p) { return p.appliedScale > 1.001; }).length;
-        setStatus('Done — dialogue enlarged on ' + scaled + ' of ' + res.report.pages.length + ' pages.');
+        setStatus('Done — dialogue enlarged on ' + scaled + ' of ' + res.report.pages.length + ' pages.'
+                  + highlightSummary(res.report));
         dlBtn.style.display = 'block';
         previews.className = 'previews on';
         busy = false;
@@ -236,6 +468,12 @@
         dlBtn.style.display = 'none';
       });
     }, 30);
+  }
+
+  var deb = null;
+  function scheduleProcess() {
+    clearTimeout(deb);
+    deb = setTimeout(process, 350);
   }
 
   function acceptFile(file) {
@@ -273,13 +511,11 @@
   fileInput.addEventListener('change', function () { acceptFile(fileInput.files[0]); });
 
   // slider
-  var deb = null;
   slider.addEventListener('input', function () {
     scaleVal.innerHTML = (+slider.value).toFixed(2) + '&times;';
     prefs.scale = +slider.value;
     savePrefs(prefs);
-    clearTimeout(deb);
-    deb = setTimeout(process, 350);
+    scheduleProcess();
   });
 
   // download

@@ -16,3 +16,6 @@ samples-private/
 .vscode/
 .idea/
 samplesides/
+
+# python bytecode
+__pycache__/

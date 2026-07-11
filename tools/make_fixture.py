@@ -125,6 +125,40 @@ PAGES = [
         ("cue", "LAURA (CONT'D)"),
         ("dial", "...I'll call you back."),
     ],
+    # page 5 — character-extraction traps: MERC #1, ELEANOR FROM HR,
+    # (CONT'D)/(V.O.) folding, an all-caps action trap at cue indent with no
+    # dialogue under it, a word-by-word drawn line (multi-run kerning), and a
+    # revision star in the margin of a dialogue line
+    [
+        ("head", "EPISODE 407 - \"NIGHT WORK\""),
+        ("blank",), ("blank",),
+        ("slug", "INT. HR OFFICE - DAY"),
+        ("blank",),
+        ("action", "Sam knocks. ELEANOR FROM HR looks up, gestures at"),
+        ("action", "the chair without smiling."),
+        ("blank",),
+        ("cue", "ELEANOR FROM HR"),
+        ("dial", "Close the door, please. Sit."),
+        ("blank",),
+        ("cue", "SAM"),
+        ("dial", "Is this about the parking thing?"),
+        ("blank",),
+        ("trapcue", "TWO SHOTS RING OUT"),
+        ("blank",),
+        ("action", "Sam hits the floor. The door SLAMS open: a MERC in"),
+        ("action", "tactical gear, weapon up."),
+        ("blank",),
+        ("cue", "MERC #1"),
+        ("dial", "Everybody stay where you are!"),
+        ("stardial", "Hands where I can see them, all of you, now!"),
+        ("blank",),
+        ("cue", "SAM (CONT'D)"),
+        ("paren", "(under the desk)"),
+        ("worddial", "It was not me on the loading dock."),
+        ("blank",),
+        ("cue", "SAM (V.O.)"),
+        ("dial", "That was the day I quit HR."),
+    ],
 ]
 
 def main():
@@ -155,9 +189,24 @@ def main():
                 c.drawString(295 + drift, y, tok[2])
                 y -= LEAD
                 continue
+            if kind == "worddial":
+                # each word its own text-show op at an absolute x (the layout
+                # real production PDFs use); exercises multi-run kerning
+                x = X_DIAL + drift
+                for word in tok[1].split(" "):
+                    c.drawString(x, y, word)
+                    x += (len(word) + 1) * 7.2  # Courier 12: 7.2pt/char
+                y -= LEAD
+                continue
+            if kind == "stardial":
+                # dialogue line with a revision star out in the right margin
+                c.drawString(X_DIAL + drift, y, tok[1])
+                c.drawString(W - 40 + drift, y, "*")
+                y -= LEAD
+                continue
             x = {"slug": X_ACTION, "action": X_ACTION, "cue": X_CUE,
                  "dial": X_DIAL, "paren": X_PAREN, "more": X_DIAL,
-                 "trans": X_TRANS}[kind]
+                 "trans": X_TRANS, "trapcue": X_CUE}[kind]
             c.drawString(x + drift, y, tok[1])
             y -= LEAD
         c.showPage()

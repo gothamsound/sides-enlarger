@@ -5,6 +5,11 @@ readable on set — while keeping the page **exactly** as it was. Same page coun
 same page breaks, same scene numbers, same everything-else. When someone says
 "page 34," it's still page 34.
 
+It can also **highlight each character's lines** in their own translucent color,
+like a highlighter through a photocopy: it finds the character names on the
+pages, you tap a color next to yours (and maybe one for your scene partner), and
+the output paints those blocks. Highlights compose with the enlargement.
+
 The whole thing is **one HTML file**. The PDF is processed **inside the browser**
 — nothing is ever uploaded, no server, no accounts, no tracking. That's the point:
 production scripts never leave the device.
@@ -22,6 +27,20 @@ production scripts never leave the device.
 
 There's a **size slider** (1.0× – 1.5×) if you want it bigger or smaller. It
 remembers your setting on that device. You don't have to touch anything else.
+
+### Highlighting your lines
+After a PDF loads, a **"Highlight characters"** panel lists every speaking
+character it found, biggest part first, with line counts. Tap a color next to a
+name to highlight that character's cue, parentheticals and dialogue; tap the
+empty circle to clear it. Highlight some, all or none. Two characters can't
+share a color (picking a taken color swaps it). The name-to-color choices are
+remembered on your device for the run of the show, so your character stays
+yellow in every new sides packet.
+
+The list comes from the pages themselves (sides have no cast page), so review
+it: hide anything that isn't a character with the ×, and type in a name if one
+was missed. One-line entries are dimmed; they're either tiny parts or noise.
+Dual dialogue (two side-by-side speakers) is never highlighted.
 
 If a warning appears under a page, it's just letting you know that page was left
 alone (see "What it leaves alone" below) — the page is still correct.
@@ -65,6 +84,11 @@ that's needed for now. If it gets popular we can add real access control later.
 ## What it changes vs. leaves alone
 
 **Enlarges:** spoken dialogue, and the parentheticals inside a dialogue block.
+
+**Highlights (opt-in):** the blocks of any character you assign a color, painted
+behind the text with a multiply blend so the words stay crisp, selectable and
+printable; the fixed palette is light enough that black-and-white printing keeps
+full contrast.
 
 **Leaves exactly in place:** scene headings (sluglines), action, character cue
 names, page headers, page numbers, scene numbers, revision stars (the `*` marks in
@@ -128,6 +152,13 @@ The output HTML has **no external dependencies** and makes **no network requests
 4. **Per-page fit / back-off** and **scan / dual-dialogue / encryption** handling as
    described above. Permission-locked PDFs are decrypted in-engine (RC4 & AES-128,
    empty user password — the standard "you can read but not edit" lock).
+5. **Character extraction + highlighting**: cue-led blocks are collected during
+   classification; names are normalized ((CONT'D)/(V.O.)/revision stars stripped)
+   and aggregated with line counts (`report.characters`, also available without a
+   rewrite via `engine.analyze()`). Assigned characters (`opts.highlights`,
+   name to palette index; palette exported as `engine.PALETTE`) get one rounded
+   multiply-blend rect per block, appended after the page content so form-XObject
+   white fills can't mask it.
 
 ### Verify (do this, don't hope)
 ```bash

@@ -41,10 +41,61 @@ run_one () {
 echo "==> testing fixture"
 run_one out/fixture.pdf fixture
 
+echo "==> fixture: character extraction"
+python3 - <<'PY' && echo "    [extraction] PASS" || { echo "    [extraction] FAIL"; fail=1; }
+import json, sys
+rep = json.load(open("out/fixture.1.25.pdf.report.json"))
+names = sorted(c["name"] for c in rep.get("characters", []))
+expected = sorted(["LAURA", "MORROW", "WITNESS", "DIAZ",
+                   "ELEANOR FROM HR", "SAM", "MERC #1"])
+if names != expected:
+    print("      extracted:", names)
+    print("      expected :", expected)
+    sys.exit(1)
+PY
+
+echo "==> fixture: highlights (LAURA=yellow, MERC #1=sky)"
+for scale in 1.0 1.25; do
+  outpdf="out/fixture.hl.${scale}.pdf"
+  node tools/run_engine_node.mjs out/fixture.pdf "$outpdf" "$scale" 'LAURA=0;MERC #1=2' \
+    >/dev/null 2>out/fixture.hl.err || { echo "    [highlights @ $scale] ENGINE ERROR:"; cat out/fixture.hl.err; fail=1; continue; }
+  if CHECK_RENDER_DIR="$RENDER_DIR/fixture_hl_${scale}" \
+       python3 tools/check.py out/fixture.pdf "$outpdf" "${outpdf}.report.json" \
+       | grep -q '^PASS'; then
+    echo "    [highlights @ $scale] PASS"
+  else
+    echo "    [highlights @ $scale] FAIL"
+    CHECK_RENDER_DIR="$RENDER_DIR/fixture_hl_${scale}" \
+      python3 tools/check.py out/fixture.pdf "$outpdf" "${outpdf}.report.json" | grep '  - ' || true
+    fail=1
+  fi
+done
+
+# real sides: also verify highlighting the most-talkative extracted character
+run_hl () {
+  local src="$1" tag="$2"
+  local top
+  top=$(python3 -c "import json;r=json.load(open('out/${tag}.1.25.pdf.report.json'));cs=[c for c in r.get('characters',[]) if c.get('lines')];print(cs[0]['name'] if cs else '')" 2>/dev/null || true)
+  if [ -z "$top" ]; then echo "    [$tag highlight] no characters extracted — skipped"; return; fi
+  node tools/run_engine_node.mjs "$src" "out/${tag}.hl.pdf" 1.25 "${top}=0" \
+    >/dev/null 2>"out/${tag}.hl.err" || { echo "    [$tag highlight] ENGINE ERROR:"; cat "out/${tag}.hl.err"; fail=1; return; }
+  if CHECK_RENDER_DIR="$RENDER_DIR/${tag}_hl" \
+       python3 tools/check.py "$src" "out/${tag}.hl.pdf" "out/${tag}.hl.pdf.report.json" \
+       | grep -q '^PASS'; then
+    echo "    [$tag highlight '$top'] PASS"
+  else
+    echo "    [$tag highlight '$top'] FAIL"
+    CHECK_RENDER_DIR="$RENDER_DIR/${tag}_hl" \
+      python3 tools/check.py "$src" "out/${tag}.hl.pdf" "out/${tag}.hl.pdf.report.json" | grep '  - ' || true
+    fail=1
+  fi
+}
+
 for real in "$@"; do
   name="$(basename "$real" .pdf)"
   echo "==> testing real: $name"
   run_one "$real" "real_${name}"
+  run_hl "$real" "real_${name}"
 done
 
 echo

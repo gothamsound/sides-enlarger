@@ -12,13 +12,15 @@ const read = f => fs.readFileSync(path.join(root, f), 'utf8');
 const safe = s => s.replace(/<\/script/gi, '<\\/script');
 
 const workerB64 = fs.readFileSync(path.join(root, 'node_modules/pdfjs-dist/legacy/build/pdf.worker.min.js')).toString('base64');
+const logoB64 = fs.readFileSync(path.join(root, 'assets/gothamsound_green-and-black.png')).toString('base64');
 
 const template = read('ui_template.html');
 const out = template
   .replace('/*__PDFJS__*/', () => safe(read('node_modules/pdfjs-dist/legacy/build/pdf.min.js')))
   .replace('/*__PDFWORKER_B64__*/', () => workerB64)
   .replace('/*__PDFLIB__*/', () => safe(read('node_modules/pdf-lib/dist/pdf-lib.min.js')))
-  .replace('/*__ENGINE__*/', () => safe(read('engine.js')));
+  .replace('/*__ENGINE__*/', () => safe(read('engine.js')))
+  .replace('__LOGO_B64__', () => logoB64);
 
 // index.html is the canonical, committed build output: GitHub Pages serves it
 // directly, and it's also the single file to email/AirDrop to an actor.
