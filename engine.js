@@ -858,39 +858,32 @@
       const cal = calibrate(pages);
       const report = { requestedScale: requested, mode, calibration: cal, pages: [], warnings: [] };
       report.enlargeOnly = enlargeSet ? Array.from(enlargeSet) : null;
-      if (!cal && mode !== 'page') {
+      if (!cal) {
         report.warnings.push('Could not locate character cues geometrically — layout too unusual. PDF returned unchanged.');
         report.characters = [];
         return { bytes, report };
       }
-      const wantHl = Object.keys(hl).length > 0 && !!cal;
+      const wantHl = Object.keys(hl).length > 0;
 
-      // classify + per-page scale (page mode still classifies when it can, for
-      // character extraction and highlight geometry)
-      let colW = 0, anchorC = 0;
-      if (cal) {
-        const widths = [];
+      // classify + per-page scale
+      const widths = [];
+      for (const P of pages) {
+        classifyPage(P, cal);
+        for (const L of P.lines) if (L.cls === 'dialogue') widths.push((L.dx1 != null ? L.dx1 : L.x1) - (L.dx0 != null ? L.dx0 : L.x0));
+      }
+      const colW = Math.min(300, Math.max(200, quantile(widths, 0.9) || 252));
+      cal.colW = colW;
+      const anchorC = cal.dialX + colW / 2; // uniform-scale anchor (see pageScale)
+      report.characters = collectCharacters(pages);
+      if (enlargeSet) {
         for (const P of pages) {
-          classifyPage(P, cal);
-          for (const L of P.lines) if (L.cls === 'dialogue') widths.push((L.dx1 != null ? L.dx1 : L.x1) - (L.dx0 != null ? L.dx0 : L.x0));
-        }
-        colW = Math.min(300, Math.max(200, quantile(widths, 0.9) || 252));
-        cal.colW = colW;
-        anchorC = cal.dialX + colW / 2; // uniform-scale anchor (see pageScale)
-        report.characters = collectCharacters(pages);
-        if (enlargeSet) {
-          for (const P of pages) {
-            for (const B of (P.blocks || [])) {
-              const on = enlargeSet.has(B.name);
-              for (const L of B.lines) L.enlarge = on;
-            }
-            // defensive: any dialogue line outside a block stays untouched
-            for (const L of P.lines) if (L.cls === 'dialogue' && L.enlarge === undefined) L.enlarge = false;
+          for (const B of (P.blocks || [])) {
+            const on = enlargeSet.has(B.name);
+            for (const L of B.lines) L.enlarge = on;
           }
+          // defensive: any dialogue line outside a block stays untouched
+          for (const L of P.lines) if (L.cls === 'dialogue' && L.enlarge === undefined) L.enlarge = false;
         }
-      } else {
-        report.characters = [];
-        report.warnings.push('Could not locate character cues — whole-page enlargement only; no per-character features.');
       }
       if (wantHl) {
         report.highlights = {};
@@ -1010,8 +1003,16 @@
           const P = pages[i];
           const page = pdfPages[i];
           const marginR = P.width - 80;
-          const pageReport = { page: i + 1, appliedScale: requested, warnings: [] };
+          const pageReport = { page: i + 1, appliedScale: requested, dialogueLines: P.lines.filter(l => l.cls === 'dialogue').length, warnings: [] };
           report.pages.push(pageReport);
+
+          // a script page has dialogue on it; title pages, coverage, call
+          // sheets and revision tables don't, and are never enlarged
+          if (!pageReport.dialogueLines) {
+            pageReport.appliedScale = 1;
+            if (requested > 1.001) pageReport.warnings.push('no dialogue on this page: left at original size (title, coverage and call-sheet pages are not enlarged)');
+            continue;
+          }
 
           // split each line: body items scale; margin-mark items don't.
           // Item-level split by x thresholds (NOT gap-based segments): left

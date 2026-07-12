@@ -106,8 +106,9 @@ renderer re-segmenting enlarged lines). It also writes
   don't collide, and a CLIP fit: a measure pass walks the content tracking
   rectangular clip paths (`re W n` — table cells, row bands) and caps the
   scale so no text grows out of its clip and gets cut off invisibly).
-  Typically lands 1.1-1.25x on real sides; table/call-sheet pages cap at 1.0
-  with a warning.
+  Typically lands 1.1-1.25x on real sides. Pages with ZERO classified
+  dialogue (title pages, coverage, call sheets, revision tables) are never
+  enlarged in any mode; they pass through byte-identical with a note.
 - **Highlighting**: one rounded rect per block of an assigned character,
   painted as a Multiply-blend fill in a content stream APPENDED after the page
   content (so white background fills inside forms can't hide it; glyphs stay

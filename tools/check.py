@@ -303,6 +303,11 @@ def main():
             # scene numbers, revision stars, page numbers) stay put exactly.
             # Word-level positions (words never merge across the mark
             # boundary and carry no space-bbox noise); span-level sizes.
+            # Pages without dialogue (title/coverage/call sheets) must not
+            # be enlarged at all.
+            if s_eff > 1.001 and not any(L.get("cls") == "dialogue" for L in blines):
+                fails.append(f"p{pi+1}: page without dialogue was enlarged "
+                             f"(coverage/call-sheet/title pages must stay untouched)")
             bwords_e = b[pi].get_text("words")
             awords_e = a[pi].get_text("words")
             for w in bwords_e:

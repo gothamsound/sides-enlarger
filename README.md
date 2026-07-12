@@ -40,7 +40,9 @@ A **"Make bigger"** switch picks what grows:
   where they were. Line positions never change, so pages stay identical; the
   practical ceiling (usually 1.1x to 1.25x) is where neighboring lines would
   start to touch or where text would escape a table cell, and pages that hit
-  a limit say which one.
+  a limit say which one. Pages with no dialogue at all (title pages,
+  coverage, call sheets, revision tables) are passed through untouched in
+  every mode.
 
 ### Highlighting your lines
 After a PDF loads, a **"Highlight characters"** panel lists every speaking

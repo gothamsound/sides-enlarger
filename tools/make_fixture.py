@@ -163,6 +163,22 @@ PAGES = [
         ("cue", "SAM (V.O.)"),
         ("dial", "That was the day I quit HR."),
     ],
+    # page 6 — title/coverage page: no dialogue anywhere; must never be
+    # enlarged in ANY mode (Everything mode included)
+    [
+        ("blank",), ("blank",), ("blank",), ("blank",),
+        ("head", "\"NIGHT WORK\""),
+        ("blank",),
+        ("head", "EPISODE 407"),
+        ("blank",), ("blank",),
+        ("action", "WRITTEN BY"),
+        ("action", "DANA KOVACS"),
+        ("blank",), ("blank",),
+        ("action", "PRODUCTION DRAFT - 06/12/22"),
+        ("action", "SIDES FOR 07/13 - SCENES 12, 14, 18A"),
+        ("blank",), ("blank",),
+        ("action", "COVERAGE: D. KOVACS / EP. 407 / NIGHT WORK"),
+    ],
 ]
 
 def main():
