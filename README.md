@@ -108,6 +108,26 @@ that's needed for now. If it gets popular we can add real access control later.
 
 ---
 
+## Run it offline (keep your own copy)
+
+You don't need the internet, and you don't need this website, to use Sides
+Enlarger. The whole tool is the single `index.html` file, so you can save your
+own copy and run it with nothing connected:
+
+- **Save it from the page you're on:** in your browser use File → Save Page As
+  (or press Ctrl+S / Cmd+S) and keep `index.html` somewhere handy. Double-click
+  it any time, on or offline.
+- **Or download it from GitHub:** grab
+  [index.html](https://github.com/gothamsound/sides-enlarger/raw/main/index.html)
+  and open it in any browser.
+- **On a phone or tablet:** save the file through your browser's share or
+  download menu, then open it from Files (iPhone) or Downloads (Android).
+
+An offline copy behaves exactly the same, and because every PDF is processed
+inside the browser, your scripts still never leave your device.
+
+---
+
 ## What it changes vs. leaves alone
 
 **Enlarges:** spoken dialogue, the parentheticals inside a dialogue block, and

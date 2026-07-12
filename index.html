@@ -193,7 +193,8 @@
          target="_blank" rel="noopener noreferrer">Report an issue or request a feature</a></p>
   </section>
 
-  <footer>Sides Enlarger v1.7.2 &middot; Everything runs in your browser: no uploads, no accounts, no tracking.<br>
+  <footer>Sides Enlarger v1.7.3 &middot; Everything runs in your browser: no uploads, no accounts, no tracking.<br>
+    <a href="https://github.com/gothamsound/sides-enlarger/blob/main/README.md#run-it-offline-keep-your-own-copy" target="_blank" rel="noopener noreferrer">How to download this page and run it offline</a><br>
     <a href="https://github.com/gothamsound/sides-enlarger/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT License</a>
     &middot; free software, provided as is with no warranty &middot; &copy; 2026 Gotham Sound and Communications, Inc.</footer>
 </main>
@@ -1159,7 +1160,24 @@
       };
       for (const L of P.lines) {
         if (L.furn) continue;
-        const live = L.items.filter(t => !t.rot && !/^\*+$/.test(t.str.trim()));
+        let live = L.items.filter(t => !t.rot && !/^\*+$/.test(t.str.trim()));
+        // Scene number prints identically in BOTH margins of a scene/shot
+        // heading. The left copy is always separated from the body column by
+        // a wide gap (far bigger than a word space, so this is drift-proof);
+        // detect it there, then drop it and its matching right-margin twin so
+        // neither bleeds into the reflowed text. Slugs surface it as "Sc. N".
+        let sceneNum = '';
+        {
+          const xs = [...live].sort((a, b) => a.x - b.x);
+          if (xs.length >= 2 && /^[A-Z]{0,3}\d+[A-Z0-9]*$/.test(xs[0].str.trim())
+              && xs[1].x - (xs[0].x + xs[0].w) > 16) {
+            sceneNum = xs[0].str.trim();
+            const drop = new Set([xs[0]]);
+            const last = xs[xs.length - 1];
+            if (last !== xs[0] && last.str.trim() === sceneNum) drop.add(last);
+            live = live.filter(t => !drop.has(t));
+          }
+        }
         // words are included or excluded WHOLE: a glyph cluster that starts
         // in the body keeps its contiguous glyphs even past the margin
         // boundary (otherwise per-glyph docs lose trailing letters)
@@ -1219,25 +1237,10 @@
         // 'other': slug / transition / action
         if (/^(INT|EXT|I\/E|INT\/EXT|EST)[.\s\/]/.test(text)) {
           flushPara();
-          const num = mk => {
-            const t2 = textFromItems(mk).trim();
-            return /^[A-Z]{0,3}\d+[A-Z0-9]*$/.test(t2) ? t2 : '';
-          };
-          // scene number prints in BOTH margins; show it once, labeled and
-          // set clear of the heading, so "- DAY     Sc. 24" doesn't read as
-          // the phrase "DAY 24".
-          const sc = num(live.filter(t => t.x + t.w <= ML)) || num(live.filter(t => t.x >= marginR));
-          let slugText = text;
-          // the scene number often bleeds into the extracted slug text (its
-          // right-margin copy sits inside the body zone, or it glues onto the
-          // last word); peel a trailing copy so it isn't doubled next to the
-          // "Sc." label. The [^0-9] boundary keeps it from eating digits of a
-          // larger number; no lookbehind (old iOS Safari would throw).
-          if (sc) {
-            const esc = sc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            slugText = slugText.replace(new RegExp('([^0-9])' + esc + '\\s*$'), '$1').trim();
-          }
-          push({ t: 'slug', text: slugText + (sc ? '     Sc. ' + sc : '') });
+          // margin scene numbers were already stripped from `text` above;
+          // show the number once, labeled and set clear of the heading, so
+          // "- DAY     Sc. 24" can't read as the phrase "DAY 24".
+          push({ t: 'slug', text: text + (sceneNum ? '     Sc. ' + sceneNum : '') });
           continue;
         }
         if (/^(CUT TO|DISSOLVE|FADE|SMASH CUT|MATCH CUT|TIME CUT|END OF)/.test(text) && L.x0 > P.width / 2) {

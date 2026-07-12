@@ -233,13 +233,28 @@ def reader_check(b, a, report, fails, notes):
             continue  # coverage/title pages are skipped in reader view
         keep_rows = [L for L in lines if not L.get("furn") and L.get("cls") != "more"]
         counted = set()  # double-struck "bold" words appear twice in place
+        scene_shape = re.compile(r"^[A-Z]{0,3}\d+[A-Z0-9]*$")
         for L in keep_rows:
             if any(abs(L["y"] - ry) <= 3 for ry in rot_ys):
                 continue
-            for w in words:
-                if (abs(w[3] - L["y"]) <= 5.0 and w[2] > 70 and w[0] < W - 80
-                        and w[4].strip() and w[4] != "*"
-                        and not any(abs(w[3] - ry) <= 4 for ry in rot_ys)):
+            row = sorted((w for w in words
+                          if abs(w[3] - L["y"]) <= 5.0 and w[4].strip()
+                          and not any(abs(w[3] - ry) <= 4 for ry in rot_ys)),
+                         key=lambda w: w[0])
+            # margin scene numbers are furniture, not body words: reader mode
+            # drops/relabels them, so they must not be required. Mirror the
+            # engine — a leading scene-number-shaped word set well left of the
+            # body, and its identical right-margin twin.
+            skip = set()
+            if len(row) >= 2 and scene_shape.match(row[0][4]) and row[1][0] - row[0][2] > 16:
+                sc = row[0][4]
+                skip.add(id(row[0]))
+                if scene_shape.match(row[-1][4]) and row[-1][4] == sc:
+                    skip.add(id(row[-1]))
+            for w in row:
+                if id(w) in skip:
+                    continue
+                if w[2] > 70 and w[0] < W - 80 and w[4] != "*":
                     k = (w[4], round(w[0]), round(w[3]))
                     if k in counted:
                         continue
