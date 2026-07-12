@@ -193,7 +193,7 @@
          target="_blank" rel="noopener noreferrer">Report an issue or request a feature</a></p>
   </section>
 
-  <footer>Sides Enlarger v1.7.1 &middot; Everything runs in your browser: no uploads, no accounts, no tracking.<br>
+  <footer>Sides Enlarger v1.7.2 &middot; Everything runs in your browser: no uploads, no accounts, no tracking.<br>
     <a href="https://github.com/gothamsound/sides-enlarger/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT License</a>
     &middot; free software, provided as is with no warranty &middot; &copy; 2026 Gotham Sound and Communications, Inc.</footer>
 </main>
@@ -1223,17 +1223,21 @@
             const t2 = textFromItems(mk).trim();
             return /^[A-Z]{0,3}\d+[A-Z0-9]*$/.test(t2) ? t2 : '';
           };
-          const lnum = num(live.filter(t => t.x + t.w <= ML));
-          let rnum = num(live.filter(t => t.x >= marginR));
+          // scene number prints in BOTH margins; show it once, labeled and
+          // set clear of the heading, so "- DAY     Sc. 24" doesn't read as
+          // the phrase "DAY 24".
+          const sc = num(live.filter(t => t.x + t.w <= ML)) || num(live.filter(t => t.x >= marginR));
           let slugText = text;
-          // some templates set the right scene number so close to the slug
-          // that it glues onto the text: peel a trailing copy of the number
-          const n2 = lnum || rnum;
-          if (n2 && slugText.endsWith(n2) && !slugText.endsWith(' ' + n2)) {
-            slugText = slugText.slice(0, -n2.length).trim();
-            if (!rnum) rnum = n2;
+          // the scene number often bleeds into the extracted slug text (its
+          // right-margin copy sits inside the body zone, or it glues onto the
+          // last word); peel a trailing copy so it isn't doubled next to the
+          // "Sc." label. The [^0-9] boundary keeps it from eating digits of a
+          // larger number; no lookbehind (old iOS Safari would throw).
+          if (sc) {
+            const esc = sc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            slugText = slugText.replace(new RegExp('([^0-9])' + esc + '\\s*$'), '$1').trim();
           }
-          push({ t: 'slug', text: (lnum ? lnum + '  ' : '') + slugText + (rnum ? '  ' + rnum : '') });
+          push({ t: 'slug', text: slugText + (sc ? '     Sc. ' + sc : '') });
           continue;
         }
         if (/^(CUT TO|DISSOLVE|FADE|SMASH CUT|MATCH CUT|TIME CUT|END OF)/.test(text) && L.x0 > P.width / 2) {

@@ -263,6 +263,9 @@ def reader_check(b, a, report, fails, notes):
     # (labels are the full drawn strings, e.g. 'SCRIPT PAGE 17 · NCIS: ...')
     for label in (report or {}).get("readerBreaks", []):
         got.subtract(collections.Counter(str(label).split()))
+    # "Sc." is the reader-added scene-number label, never source text
+    if "Sc." in got:
+        del got["Sc."]
     got = +got
     missing = need - got
     for t, n in list(missing.items())[:8]:
