@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
+<!-- Technically enforce the no-upload guarantee: no network of any kind.
+     Scripts/styles are inlined by the build; the pdf.js worker runs from a
+     local blob URL; the logo is a data URI. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' blob:; style-src 'unsafe-inline'; img-src data: blob:; worker-src blob:; connect-src 'none'; base-uri 'none'; form-action 'none'">
 <title>Sides Enlarger</title>
 <style>
   :root { --ink:#1a1a1a; --paper:#faf8f4; --accent:#6d6f1c; --accentSoft:#eef0d8; --warn:#a05a00; --err:#b3261e; }
@@ -22,6 +26,10 @@
   .who { display:inline-block; background:var(--accentSoft); color:var(--accent); border-radius:12px;
          padding:1px 10px; font-size:13px; margin-left:8px; vertical-align:middle; }
   .who[hidden] { display:none; }
+  #forget { border:0; background:none; color:#aaa; font-size:12px; margin-left:10px;
+            cursor:pointer; text-decoration:underline; vertical-align:middle; padding:0; }
+  #forget[hidden] { display:none; }
+  #forget:hover { color:var(--err); }
   #drop { border:2.5px dashed #b9b2a6; border-radius:14px; padding:44px 20px; text-align:center;
           background:#fff; cursor:pointer; transition:border-color .15s, background .15s; }
   #drop.hover { border-color:var(--accent); background:#f6f7e8; }
@@ -109,7 +117,7 @@
   <header class="brand">
     <img alt="Gotham Sound" src="data:image/png;base64,__LOGO_B64__">
     <div>
-      <h1><span class="mono">SIDES ENLARGER</span><span id="who" class="who" hidden></span></h1>
+      <h1><span class="mono">SIDES ENLARGER</span><span id="who" class="who" hidden></span><button id="forget" type="button" hidden>forget my saved settings</button></h1>
       <p class="sub">Drop today's sides. Dialogue comes back bigger, and you can highlight each
          character's lines in their own color. Same pages, same everything else.
          Your script never leaves this device.</p>
@@ -224,6 +232,14 @@
     var chip = document.getElementById('who');
     chip.textContent = who;
     chip.hidden = false;
+    // give the user control over the only thing stored on the device:
+    // their name -> size/mode/colors map (script-derived, never transmitted)
+    var forgetBtn = document.getElementById('forget');
+    if (localStorage.getItem(PREFS)) forgetBtn.hidden = false;
+    forgetBtn.addEventListener('click', function () {
+      try { localStorage.removeItem(PREFS); } catch (e) {}
+      location.reload();
+    });
   }
   function loadPrefs() {
     if (!who) return {};
@@ -523,6 +539,7 @@
     if (busy) { queued = true; return; }
     busy = true;
     var s = +slider.value;
+    var genAt = fileGen;
     setStatus('Working… (' + s.toFixed(2) + '×)');
     // yield to paint before heavy work
     setTimeout(function () {
@@ -535,6 +552,11 @@
         });
       }
       engine.process(originalBytes, opts).then(function (res) {
+        if (genAt !== fileGen) { // result belongs to a replaced file: drop it
+          busy = false;
+          if (queued) { queued = false; process(); }
+          return null;
+        }
         var blob = new Blob([res.bytes], { type: 'application/pdf' });
         if (outBlobUrl) URL.revokeObjectURL(outBlobUrl);
         outBlobUrl = URL.createObjectURL(blob);
@@ -551,7 +573,10 @@
         });
       }).then(function (res) {
         if (!res) return;
-        if (res.report.mode === 'reader') {
+        if (!res.report.pages.length && res.report.readerPages == null) {
+          // calibration failed: engine returned the PDF unchanged
+          setStatus('Done — could not recognize this PDF as sides; returned unchanged.');
+        } else if (res.report.mode === 'reader') {
           setStatus('Done — reflowed ' + res.report.sourcePages + ' script pages into '
                     + res.report.readerPages + ' reader pages (original pages marked inline).'
                     + highlightSummary(res.report));
@@ -583,22 +608,33 @@
     deb = setTimeout(process, 350);
   }
 
+  var fileGen = 0; // generation token: guards against file-selection races
   function acceptFile(file) {
     if (!file) return;
     if (!/pdf$/i.test(file.type) && !/\.pdf$/i.test(file.name)) {
       setStatus('That is not a PDF. Sides Enlarger needs the PDF your production sent.', true);
       return;
     }
+    var gen = ++fileGen;
+    // invalidate the previous document's output immediately, so a stale
+    // result can never download under the new file's name
+    dlBtn.style.display = 'none';
+    if (outBlobUrl) { URL.revokeObjectURL(outBlobUrl); outBlobUrl = null; }
+    warnUl.innerHTML = '';
+    setStatus('Reading ' + file.name + '…');
     originalName = file.name.replace(/\.pdf$/i, '');
     file.arrayBuffer().then(function (buf) {
+      if (gen !== fileGen) return; // a newer file was chosen meanwhile
       originalBytes = new Uint8Array(buf);
       curPage = 1;
       var prevB = docB;
       return openDoc(originalBytes).then(function (d) {
+        if (gen !== fileGen) { d.destroy(); return; }
         docB = d; if (prevB) prevB.destroy();
         process();
       });
     }).catch(function (e) {
+      if (gen !== fileGen) return;
       setStatus('Could not open this PDF. (' + (e && e.message ? e.message : e) + ')', true);
     });
   }

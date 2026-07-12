@@ -453,18 +453,25 @@
     const length = g('Length') ? g('Length').asNumber() : 40;
     const O = ctx.lookup(g('O')).asBytes();
     let P = ctx.lookup(g('P')).asNumber();
-    // method for streams/strings (V4 crypt filters)
-    let aes = false;
+    // V4 crypt filters: streams (StmF) and strings (StrF) can use DIFFERENT
+    // methods, including Identity (not encrypted at all) — applying one
+    // method to everything corrupts mixed documents.
+    let stmMethod = 'RC4', strMethod = 'RC4';
+    const cfDict = V === 4 && g('CF') ? ctx.lookup(g('CF')) : null;
+    const methodOf = fname => {
+      if (!fname || fname === 'Identity') return 'Identity';
+      const fRef = cfDict && cfDict.get(PDFLib.PDFName.of(fname));
+      const f = fRef && ctx.lookup(fRef);
+      const cfm = f && f.get(PDFLib.PDFName.of('CFM'));
+      const m = cfm ? cfm.toString() : '/V2';
+      if (m === '/AESV3') throw new Error('AES-256 PDF encryption is not supported.');
+      if (m === '/AESV2') return 'AES';
+      if (m === '/None') return 'Identity';
+      return 'RC4';
+    };
     if (V === 4) {
-      const cf = g('CF') && ctx.lookup(g('CF'));
-      const stmf = g('StmF');
-      const fname = stmf ? stmf.asString().slice(1) : 'Identity';
-      if (fname !== 'Identity' && cf) {
-        const f = cf.get(PDFLib.PDFName.of(fname)) && ctx.lookup(cf.get(PDFLib.PDFName.of(fname)));
-        const cfm = f && f.get(PDFLib.PDFName.of('CFM'));
-        if (cfm && cfm.asString() === '/AESV2') aes = true;
-        else if (cfm && cfm.asString() === '/AESV3') throw new Error('AES-256 PDF encryption is not supported.');
-      }
+      stmMethod = methodOf(g('StmF') ? g('StmF').asString().slice(1) : 'Identity');
+      strMethod = methodOf(g('StrF') ? g('StrF').asString().slice(1) : 'Identity');
     }
     const encryptMetadata = g('EncryptMetadata') ? String(g('EncryptMetadata')) !== 'false' : true;
     const idArr = ctx.lookup(ctx.trailerInfo.ID);
@@ -479,7 +486,7 @@
     let key = md5(material).slice(0, keyLen);
     if (R >= 3) for (let i = 0; i < 50; i++) key = md5(key.slice(0, keyLen)).slice(0, keyLen);
 
-    const objKey = (num, gen) => {
+    const objKey = (num, gen, aes) => {
       const extra = aes ? [0x73, 0x41, 0x6C, 0x54] : [];
       const m = concatBytes([key,
         new Uint8Array([num & 0xff, (num >> 8) & 0xff, (num >> 16) & 0xff, gen & 0xff, (gen >> 8) & 0xff]),
@@ -487,9 +494,62 @@
       return md5(m).slice(0, Math.min(keyLen + 5, 16));
     };
     return {
-      aes,
-      decrypt: async (num, gen, data) => aes ? aesCbcDecrypt(objKey(num, gen), data) : rc4(objKey(num, gen), data),
+      stmMethod, strMethod, methodOf, encryptMetadata,
+      apply: async (num, gen, data, method) => {
+        if (method === 'Identity') return data;
+        if (method === 'AES') return aesCbcDecrypt(objKey(num, gen, true), data);
+        return rc4(objKey(num, gen, false), data);
+      },
     };
+  }
+
+  // A stream can carry its own /Crypt filter naming the crypt-filter to use
+  // (commonly Identity, e.g. unencrypted XMP metadata). Returns the named
+  // filter ('Identity' when unnamed) or undefined when there is no /Crypt.
+  function cryptFilterName(PDFLib, ctx, dict) {
+    const N = PDFLib.PDFName.of.bind(PDFLib.PDFName);
+    const filt = dict.get(N('Filter'));
+    const f = filt && ctx.lookup(filt);
+    if (!f) return undefined;
+    const entries = f instanceof PDFLib.PDFArray
+      ? [...Array(f.size()).keys()].map(i => ctx.lookup(f.get(i)))
+      : [f];
+    const idx = entries.findIndex(e => e && e.toString && e.toString() === '/Crypt');
+    if (idx === -1) return undefined;
+    const dp = dict.get(N('DecodeParms')) || dict.get(N('DP'));
+    const d = dp && ctx.lookup(dp);
+    let parms = d;
+    if (d instanceof PDFLib.PDFArray) parms = ctx.lookup(d.get(idx));
+    const name = parms && parms.get && parms.get(N('Name'));
+    return name ? name.toString().slice(1) : 'Identity';
+  }
+
+  // After in-place decryption the document is plaintext: /Crypt filter
+  // entries must be removed or viewers will reject the streams.
+  function stripCryptFilter(PDFLib, ctx, dict) {
+    const N = PDFLib.PDFName.of.bind(PDFLib.PDFName);
+    const filt = dict.get(N('Filter'));
+    const f = filt && ctx.lookup(filt);
+    if (!f) return;
+    if (!(f instanceof PDFLib.PDFArray)) {
+      if (f.toString() === '/Crypt') { dict.delete(N('Filter')); dict.delete(N('DecodeParms')); dict.delete(N('DP')); }
+      return;
+    }
+    const idx = [...Array(f.size()).keys()]
+      .findIndex(i => { const e = ctx.lookup(f.get(i)); return e && e.toString && e.toString() === '/Crypt'; });
+    if (idx === -1) return;
+    const keepF = [];
+    for (let i = 0; i < f.size(); i++) if (i !== idx) keepF.push(f.get(i));
+    dict.set(N('Filter'), ctx.obj(keepF));
+    const dpKey = dict.get(N('DecodeParms')) ? 'DecodeParms' : (dict.get(N('DP')) ? 'DP' : null);
+    if (dpKey) {
+      const d = ctx.lookup(dict.get(N(dpKey)));
+      if (d instanceof PDFLib.PDFArray) {
+        const keepD = [];
+        for (let i = 0; i < d.size(); i++) if (i !== idx) keepD.push(d.get(i));
+        dict.set(N(dpKey), ctx.obj(keepD));
+      } else dict.delete(N(dpKey));
+    }
   }
 
   function concatBytes(list) {
@@ -514,11 +574,21 @@
       if (obj instanceof PDFLib.PDFRawStream) {
         const t = obj.dict.get(PDFLib.PDFName.of('Type'));
         if (t && t.toString() === '/XRef') continue; // never encrypted
-        obj.contents = await dec.decrypt(num, gen, obj.contents);
+        if (!dec.encryptMetadata && t && t.toString() === '/Metadata') continue;
+        let method = dec.stmMethod;
+        const cn = cryptFilterName(PDFLib, ctx, obj.dict);
+        if (cn !== undefined) {
+          // per-stream /Crypt filter overrides the document stream method
+          method = dec.methodOf(cn);
+          stripCryptFilter(PDFLib, ctx, obj.dict);
+        }
+        obj.contents = await dec.apply(num, gen, obj.contents, method);
         continue;
       }
       // strings anywhere inside this object
-      await visitStrings(PDFLib, obj, async bytes => dec.decrypt(num, gen, bytes), strCache);
+      if (dec.strMethod !== 'Identity') {
+        await visitStrings(PDFLib, obj, async bytes => dec.apply(num, gen, bytes, dec.strMethod), strCache);
+      }
     }
     delete ctx.trailerInfo.Encrypt;
     return true;
@@ -1284,6 +1354,62 @@
       };
       const visitedForms = new Set();
 
+      // Forms invoked more than once (shared across pages, or placed twice)
+      // can only be mutated once, which would bake one placement's geometry
+      // into every other placement. Count every invocation up front; pages
+      // that draw text through a multi-use form are left unscaled entirely.
+      const formUse = new Map();     // refKey -> total invocations
+      const formHasText = new Map(); // refKey -> shows text (self or nested)
+      const pageSharedTextForm = [];
+      {
+        const srcCache = new Map();
+        const walk = (src, resources, seen, keysOut) => {
+          if (src.indexOf('BI') !== -1 && /(^|[\s>\]])BI[\s\/]/.test(src)) return true; // inline image: don't parse, assume text
+          let hasText = false;
+          for (const ins of toInstructions(tokenize(src), src)) {
+            if (ins.op === 'Tj' || ins.op === 'TJ' || ins.op === "'" || ins.op === '"') { hasText = true; continue; }
+            if (ins.op !== 'Do' || !ins.operands[0] || ins.operands[0].raw[0] !== '/' || !resources) continue;
+            const xoRef = resources.get(N('XObject'));
+            const xoDict = xoRef && ctx.lookup(xoRef);
+            const ref2 = xoDict && xoDict.get(N(ins.operands[0].raw.slice(1)));
+            const form = ref2 && ctx.lookup(ref2);
+            if (!form || !form.dict) continue;
+            const sub = form.dict.get(N('Subtype'));
+            if (!sub || sub.toString() !== '/Form') continue;
+            const key = ref2.objectNumber + '_' + ref2.generationNumber;
+            formUse.set(key, (formUse.get(key) || 0) + 1);
+            keysOut.add(key);
+            if (!seen.has(key)) {
+              seen.add(key);
+              if (!srcCache.has(key)) srcCache.set(key, latinOf(decodeStream(form)));
+              const fResRef = form.dict.get(N('Resources'));
+              const inner = walk(srcCache.get(key), fResRef ? ctx.lookup(fResRef) : resources, seen, keysOut);
+              formHasText.set(key, !!(formHasText.get(key) || inner));
+              if (inner) hasText = true;
+            } else if (formHasText.get(key)) hasText = true;
+          }
+          return hasText;
+        };
+        for (let i = 0; i < pdfPages.length; i++) {
+          const keys = new Set();
+          const page0 = pdfPages[i];
+          const resolved0 = ctx.lookup(page0.node.get(N('Contents')));
+          const streams0 = [];
+          if (resolved0 instanceof PDFLib.PDFArray) {
+            for (let k = 0; k < resolved0.size(); k++) streams0.push(ctx.lookup(resolved0.get(k)));
+          } else if (resolved0) streams0.push(resolved0);
+          let latin0 = '';
+          for (const st of streams0) latin0 += latinOf(decodeStream(st)) + '\n';
+          const pageRes0 = page0.node.Resources ? page0.node.Resources() : ctx.lookup(page0.node.get(N('Resources')));
+          try { walk(latin0, pageRes0, new Set(), keys); } catch (e) { /* count best-effort */ }
+          pageSharedTextForm.push(keys);
+        }
+        for (let i = 0; i < pageSharedTextForm.length; i++) {
+          pageSharedTextForm[i] = [...pageSharedTextForm[i]]
+            .some(k => (formUse.get(k) || 0) > 1 && formHasText.get(k));
+        }
+      }
+
       // Recursively rewrite a content string, descending into form XObjects.
       // `resources` is the PDFDict in whose /XObject a `Do` name resolves.
       // `visited` guards shared forms per traversal; `collect` switches the
@@ -1301,7 +1427,8 @@
           const sub = form.dict.get(N('Subtype'));
           if (!sub || sub.toString() !== '/Form') return false; // images etc: leave
           const key = ref.objectNumber + '_' + ref.generationNumber;
-          if (visited.has(key)) return false; // already handled (shared form)
+          if ((formUse.get(key) || 0) > 1) return false; // multi-use: never mutate
+          if (visited.has(key)) return false; // already handled this traversal
           visited.add(key);
           const innerCtm = mul(matrixOf(form.dict), ctmAtDo);
           const fResRef = form.dict.get(N('Resources'));
@@ -1473,9 +1600,14 @@
           }
           const sGeo = clipBlocked ? 1 : maxFeasible();
 
-          const s = Math.max(1, Math.floor(Math.min(requested, sV, sGeo) * 100) / 100);
+          let s = Math.max(1, Math.floor(Math.min(requested, sV, sGeo) * 100) / 100);
+          if (pageSharedTextForm[i]) {
+            s = 1;
+            pageReport.appliedScale = 1;
+            if (requested > 1.001) pageReport.warnings.push('text on this page lives in a container shared with other pages — left unscaled for safety');
+          }
           pageReport.appliedScale = s;
-          if (s < requested - 0.005) {
+          if (s < requested - 0.005 && !pageSharedTextForm[i]) {
             pageReport.warnings.push(sGeo < sGeoNoClip - 0.005 && sGeo <= sV
               ? `clipped layout (table cells) limits enlargement to ${s.toFixed(2)}x on this page`
               : (sV <= sGeo
@@ -1535,7 +1667,10 @@
         pageReport.enlargedLines = P.lines.filter(l => l.cls === 'dialogue' && l.enlarge !== false).length;
         if (!pageReport.enlargedLines) pageReport.appliedScale = 1;
 
-        if (pageReport.enlargedLines) {
+        if (pageReport.enlargedLines && pageSharedTextForm[i]) {
+          pageReport.appliedScale = 1;
+          if (requested > 1.001) pageReport.warnings.push('text on this page lives in a container shared with other pages — left unscaled for safety');
+        } else if (pageReport.enlargedLines) {
           const s = pageScale(P, requested, colW, cal.dialX);
           pageReport.appliedScale = s;
           if (s < requested - 0.005) pageReport.warnings.push(`enlarged dialogue would not fit — backed off to ${s.toFixed(2)}x on this page`);

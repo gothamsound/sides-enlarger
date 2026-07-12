@@ -143,11 +143,22 @@ renderer re-segmenting enlarged lines). It also writes
   blocks are never painted.
 - **Recurses through form XObjects.** Real production sides put the page text inside
   `/Form` XObjects invoked via `Do`; the rewriter descends into them (accumulating
-  CTM) and mutates the form stream. Shared forms are guarded by a visited-set.
+  CTM) and mutates the form stream. A form invoked more than once (shared across
+  pages, or placed twice) can only be mutated once, and mutating it would bake one
+  placement's geometry into every other placement. A pre-pass counts every form
+  invocation across all pages (`formUse`) and flags which carry text; any page whose
+  text lives in a multi-use form is left **entirely unscaled** with a note. Do not
+  "optimize" this back to a per-traversal visited-set — that silently corrupts the
+  other placements.
 - **Decrypts in-engine.** Production PDFs are usually permission-locked (RC4-128 or
   AES-128, empty user password). `decryptInPlace` handles Standard security handler
   R2–R4 and drops `/Encrypt`; output is unlocked. AES needs `crypto.subtle` (https
   or file://), RC4 is pure JS. R5+/AES-256 is refused with a clear message.
+  **V4 crypt filters:** streams (`StmF`) and strings (`StrF`) can use *different*
+  methods, one of which may be `/Identity` (not encrypted). A per-stream `/Crypt`
+  filter (e.g. unencrypted XMP `/Metadata`) overrides the document default and is
+  then stripped from the stream's `/Filter`. Applying one method to everything
+  corrupts mixed documents, so the method is resolved per object.
 
 ## Known gotchas (already handled — don't reintroduce)
 - **Revision `*` marks** sit in the far-right margin. A line's fit-width and
@@ -187,6 +198,28 @@ renderer re-segmenting enlarged lines). It also writes
 - Don't add runtime network access or external assets.
 - If you touch classification or scaling, add/extend a case in `make_fixture.py`
   and confirm `npm test` stays green **and** eyeball the renders.
+
+## Security posture (audited — keep these intact)
+- **No network, technically enforced.** A CSP `<meta>` in `ui_template.html` sets
+  `default-src 'none'; connect-src 'none'` so the page cannot make any network
+  request even if a future edit tried to. `script-src 'unsafe-inline' blob:` is the
+  *minimum* that works: inline for the bundled libs, `blob:` because the pdf.js
+  worker (and its fake-worker fallback) loads from a `blob:` URL. It deliberately
+  omits `'unsafe-eval'`, which blocks the pre-4.2.67 pdf.js eval-execution advisory
+  (GHSA-wgrm-67xf-hhpq) at the browser level. **Always re-test the built page in a
+  real browser after touching the CSP** — Node tests don't enforce it, and a missing
+  token silently breaks the worker ("Could not open this PDF").
+- **pdf.js eval mitigation:** every `getDocument` call passes `isEvalSupported:false`
+  (both `engine.js` extract and the UI preview `openDoc`). This plus the CSP is why
+  the pdfjs-dist advisory is mitigated without the 3.x→5.x major bump. If you *do*
+  bump pdfjs-dist, re-verify the worker inlining in `build.mjs` and the
+  `getTextContent` item shape (`transform`, `width`, `str`).
+- **`.npmrc` `omit=optional`** keeps the unused `canvas` (Node-render only; we use
+  pymupdf/reportlab for images) and its vulnerable `tar` subtree out of installs.
+  Don't add a runtime dep on `canvas`.
+- **localStorage** holds only a `#name` → {size, mode, colors, character lists} map,
+  and only when the URL has a `#name`; the root URL is stateless. A "forget my saved
+  settings" control clears it. Never send this anywhere.
 
 ## Deploy (GitHub Pages)
 Commit everything, push. In repo Settings → Pages, serve from the default branch

@@ -179,13 +179,41 @@ PAGES = [
         ("blank",), ("blank",),
         ("action", "COVERAGE: D. KOVACS / EP. 407 / NIGHT WORK"),
     ],
+    # pages 7-8 — the SAME form XObject (shared stationery with text) drawn
+    # on both pages: a multi-use form can only be mutated once, so the engine
+    # must refuse to scale these pages and say so
+    [
+        ("head", "EPISODE 407 - \"NIGHT WORK\""),
+        ("blank",), ("blank",),
+        ("slug", "INT. EVIDENCE ROOM - NIGHT"),
+        ("blank",),
+        ("cue", "LAURA"),
+        ("dial", "Log it. All of it."),
+        ("blank",),
+        ("sharedform",),
+    ],
+    [
+        ("head", "EPISODE 407 - \"NIGHT WORK\""),
+        ("blank",), ("blank",),
+        ("slug", "INT. EVIDENCE ROOM - LATER"),
+        ("blank",),
+        ("cue", "LAURA"),
+        ("dial", "And the ninth bag goes with me."),
+        ("blank",),
+        ("sharedform",),
+    ],
 ]
 
 def main():
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     c = canvas.Canvas(OUT, pagesize=letter)
+    # a form XObject shared by pages 7-8 (multi-use container with text)
+    c.beginForm("SharedNote")
+    c.setFont(FONT, SIZE)
+    c.drawString(X_ACTION, 320, "PROPERTY OF PRODUCTION - DO NOT DUPLICATE")
+    c.endForm()
     for pi, page in enumerate(PAGES):
-        drift = (pi * 3) - 4  # photocopy drift: -4, -1, +2, +5 pt
+        drift = (pi * 3) - 4 if pi < 6 else 2  # photocopy drift, mild on 7-8
         c.setFont(FONT, SIZE)
         y = H - 54  # ~0.75" top margin
         # page number top-right
@@ -217,6 +245,9 @@ def main():
                     c.drawString(x, y, word)
                     x += (len(word) + 1) * 7.2  # Courier 12: 7.2pt/char
                 y -= LEAD
+                continue
+            if kind == "sharedform":
+                c.doForm("SharedNote")
                 continue
             if kind == "clipcell":
                 c.saveState()
