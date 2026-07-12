@@ -22,9 +22,12 @@ there is no backend.
 2. **Confidentiality / offline.** Scripts must never leave the device. No network
    calls, no CDNs, no telemetry, no cloud. Everything (pdf.js, its worker, pdf-lib,
    the engine) is inlined into `index.html`. Keep it that way.
-3. **Only dialogue changes.** Sluglines, action, character cues, page headers,
-   page/scene numbers, revision `*` marks, watermarks — all stay byte-for-byte in
-   place. Dialogue is detected **geometrically** (indented column + follows a
+3. **Only dialogue blocks change.** A block = the character cue plus its
+   parentheticals and dialogue; the cue scales with its block. Sluglines,
+   action, page headers, page/scene numbers, revision `*` marks, watermarks —
+   all stay byte-for-byte in place (in Everything mode, body text scales but
+   margin marks and repeated header/footer furniture still never move).
+   Dialogue is detected **geometrically** (indented column + follows a
    character cue, calibrated per document), never by reading the words.
 4. **Output is a normal printable PDF** at the original page size.
 
@@ -101,14 +104,20 @@ renderer re-segmenting enlarged lines). It also writes
   the page's content-center x, so all text grows on its own unmoved baseline
   and spreads toward the edges. Margin furniture (segments left of x=70 or
   right of pageW-80: scene numbers, revision stars, page numbers) never
-  scales. Per-page cap = min(page-edge/margin-mark width fit, line-spacing
-  fit `gap / (0.16*size_above + 0.64*size_below)` so ascenders and descenders
-  don't collide, and a CLIP fit: a measure pass walks the content tracking
-  rectangular clip paths (`re W n` — table cells, row bands) and caps the
-  scale so no text grows out of its clip and gets cut off invisibly).
-  Typically lands 1.1-1.25x on real sides. Pages with ZERO classified
-  dialogue (title pages, coverage, call sheets, revision tables) are never
-  enlarged in any mode; they pass through byte-identical with a note.
+  scales, and neither does header/footer FURNITURE (top/bottom-zone rows
+  whose digit-stripped text repeats on half the pages: show-name headers,
+  CONTINUED: rows, (CONTINUED) footers) — furniture would otherwise cap the
+  whole page with its tight internal gaps. The horizontal map is a per-page
+  affine `x' = s*x + t` (max feasible s by binary search over per-line stops,
+  then t centers the body), so the widest stage-direction line spans the full
+  printable width. Caps: line-spacing fit `gap / (0.16*size_above +
+  0.64*size_below)` (fixed rows only consume their unscaled share) and a CLIP
+  fit: a measure pass walks the content tracking rectangular clip paths
+  (`re W n` — table cells, row bands) and tightens the per-line stops so no
+  text grows out of its clip and gets cut off invisibly. Typically lands
+  1.15-1.25x on real sides. Pages with ZERO classified dialogue (title pages,
+  coverage, call sheets, revision tables) are never enlarged in any mode;
+  they pass through byte-identical with a note.
 - **Highlighting**: one rounded rect per block of an assigned character,
   painted as a Multiply-blend fill in a content stream APPENDED after the page
   content (so white background fills inside forms can't hide it; glyphs stay
@@ -129,7 +138,9 @@ renderer re-segmenting enlarged lines). It also writes
   scale-match band use the **dialogue segment only** (spans left of `pageW-80`), or
   they'd wrongly force back-off and could scale the `*`. Mirror this in check.py.
   If a line has such marks, enlargement is additionally capped so the grown text
-  stays 4pt clear of them (`L.starX0`).
+  stays 4pt clear of them (`L.starX0`). A starred CUE ("TRACY  *") is two
+  segments: cue detection and dual-row detection both look at body segments
+  only, or the cue (and its whole block) silently vanishes.
 - **Glyph-per-op PDFs**: pdf.js returns one item per glyph; when joining item
   text, insert a space only across a real word-sized gap or cue names read as
   "R U M A" and every text heuristic breaks.

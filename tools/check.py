@@ -79,11 +79,16 @@ def capsy(t):
     return len(letters) >= 2 and letters == letters.upper()
 
 
-def is_cue(L, lo, hi):
-    return (len(L["segs"]) == 1 and capsy(L["text"]) and len(L["text"].strip()) <= 42
+def is_cue(L, lo, hi, pageW=0):
+    # a cue may carry revision marks in the far-right margin ("TRACY  *")
+    segs = [s for s in L["segs"] if s["x0"] < pageW - 80] if pageW else L["segs"]
+    if len(segs) != 1 or (segs and L["segs"] and segs[0] is not L["segs"][0]):
+        return False
+    text = segs[0]["text"] if segs else ""
+    return (capsy(text) and len(text.strip()) <= 42
             and lo <= L["x0"] <= hi
-            and not re.search(r"\b(INT|EXT)\s*[./]", L["text"])
-            and not re.search(r"(CUT TO|FADE (IN|OUT)|DISSOLVE)", L["text"]))
+            and not re.search(r"\b(INT|EXT)\s*[./]", text)
+            and not re.search(r"(CUT TO|FADE (IN|OUT)|DISSOLVE)", text))
 
 
 def norm_cue(t):
@@ -112,13 +117,14 @@ def collect_blocks(lines):
 
 def classify_doc(doc):
     pages_lines = [get_lines(p) for p in doc]
-    cue_xs = [L["x0"] for lines in pages_lines for L in lines if is_cue(L, 200, 340)]
+    widths = [p.rect.width for p in doc]
+    cue_xs = [L["x0"] for lines, W in zip(pages_lines, widths) for L in lines if is_cue(L, 200, 340, W)]
     assert len(cue_xs) >= 2, "verifier could not find character cues"
     cue_x = statistics.median(cue_xs)
     dial_xs = []
-    for lines in pages_lines:
+    for lines, W in zip(pages_lines, widths):
         for i, L in enumerate(lines):
-            if is_cue(L, cue_x - 12, cue_x + 12) and i + 1 < len(lines):
+            if is_cue(L, cue_x - 12, cue_x + 12, W) and i + 1 < len(lines):
                 nxt = lines[i + 1]
                 if (nxt["y"] - L["y"] < 3 * LEAD and cue_x - 130 < nxt["x0"] < cue_x - 30
                         and not nxt["text"].strip().startswith("(")):
@@ -128,13 +134,14 @@ def classify_doc(doc):
                 if L["text"].strip().startswith("(") and dial_x + 6 < L["x0"] < dial_x + 70]
     paren_x = statistics.median(paren_xs) if paren_xs else dial_x + 43
 
-    for lines in pages_lines:
+    for lines, W in zip(pages_lines, widths):
         in_block, dual, prev_y = False, False, None
         for L in lines:
             if prev_y is not None and L["y"] - prev_y > 28:
                 in_block = False
             prev_y = L["y"]
-            if len(L["segs"]) >= 2 and all(capsy(s["text"]) and len(s["text"].strip()) <= 30 for s in L["segs"]):
+            body_segs = [s for s in L["segs"] if s["x0"] < W - 80]
+            if len(body_segs) >= 2 and all(capsy(s["text"]) and len(s["text"].strip()) <= 30 for s in body_segs):
                 L["cls"], dual, in_block = "dual", True, False
                 continue
             if dual:
@@ -142,7 +149,7 @@ def classify_doc(doc):
                     L["cls"] = "dual"
                     continue
                 dual = False
-            if is_cue(L, cue_x - 12, cue_x + 12):
+            if is_cue(L, cue_x - 12, cue_x + 12, W):
                 L["cls"], in_block = "cue", True
                 continue
             if in_block and (abs(L["x0"] - dial_x) <= 9 or abs(L["x0"] - paren_x) <= 9):
@@ -150,6 +157,38 @@ def classify_doc(doc):
                 continue
             L["cls"], in_block = "other", False
     return pages_lines
+
+
+def mark_furniture(pages_lines, heights):
+    """mirror of the engine's markFurniture (page mode): top/bottom-zone rows
+    whose digit-stripped text repeats on at least half the pages"""
+    from collections import defaultdict
+
+    def zone(L, H):  # pymupdf y is top-down
+        if L["y"] < 0.15 * H:
+            return "top"
+        if L["y"] > 0.88 * H:
+            return "bot"
+        return None
+
+    def key(L):
+        return re.sub(r"\s+", " ", re.sub(r"[0-9]", "", L["text"])).strip().upper()
+
+    seen = defaultdict(set)
+    for pi, lines in enumerate(pages_lines):
+        for L in lines:
+            z = zone(L, heights[pi])
+            if not z or L.get("cls") in ("cue", "dialogue"):
+                continue
+            seen[(z, key(L))].add(pi)
+    need = max(2, -(-len(pages_lines) // 2))
+    for pi, lines in enumerate(pages_lines):
+        for L in lines:
+            z = zone(L, heights[pi])
+            if not z or L.get("cls") in ("cue", "dialogue"):
+                continue
+            if not key(L) or len(seen[(z, key(L))]) >= need:
+                L["furn"] = True
 
 
 def main():
@@ -173,6 +212,8 @@ def main():
             raise
         before_cls = [get_lines(p) for p in b]
         notes.append("no cues classifiable; page-mode geometric checks only")
+    if mode == "page":
+        mark_furniture(before_cls, [p.rect.height for p in b])
     ratios = []
     gap_bad = []
     hl = (report or {}).get("highlights") or {}
@@ -198,12 +239,20 @@ def main():
         marginStart = pageW - 80  # exclude right-margin revision marks (*)
         blocks = collect_blocks(blines)
         line_name = {}
+        enl_cues = set()
         for B in blocks:
             for L in B["lines"]:
                 line_name[id(L)] = B["name"]
+            # the character name scales with its block (when the block has
+            # dialogue and, in selective mode, is selected)
+            if any(l.get("cls") == "dialogue" for l in B["lines"]) and (sel is None or B["name"] in sel):
+                enl_cues.add(id(B["cue"]))
 
         def line_enlarged(L):
-            if L.get("cls") != "dialogue":
+            c = L.get("cls")
+            if c == "cue":
+                return id(L) in enl_cues
+            if c != "dialogue":
                 return False
             if sel is None:
                 return True
@@ -248,8 +297,8 @@ def main():
         # In selective mode, dialogue of unselected characters must also stay
         # untouched. Skipped in page mode (everything moves by the affine).
         for L in (blines if mode != "page" else []):
-            keep = (L.get("cls") in ("other", "cue", "dual", "more")
-                    or (L.get("cls") == "dialogue" and not line_enlarged(L)))
+            keep = (L.get("cls") in ("other", "dual", "more")
+                    or (L.get("cls") in ("cue", "dialogue") and not line_enlarged(L)))
             if not keep:
                 continue
             for sp in L["spans"]:
@@ -308,21 +357,27 @@ def main():
             if s_eff > 1.001 and not any(L.get("cls") == "dialogue" for L in blines):
                 fails.append(f"p{pi+1}: page without dialogue was enlarged "
                              f"(coverage/call-sheet/title pages must stay untouched)")
+            furn_ys = [L["y"] for L in blines if L.get("furn")]
+
+            def near_furn(y):
+                return any(abs(y - fy) <= 5.0 for fy in furn_ys)
+
             bwords_e = b[pi].get_text("words")
             awords_e = a[pi].get_text("words")
             for w in bwords_e:
                 if not w[4].strip():
                     continue
-                is_mark = w[0] >= marginStart or w[2] <= 70
-                ex0 = w[0] if (is_mark or s_eff <= 1.001) else anchor + s_eff * (w[0] - anchor)
-                tol = 0.7 if is_mark else 1.5
+                is_fixed = w[0] >= marginStart or w[2] <= 70 or near_furn(w[3])
+                ex0 = w[0] if (is_fixed or s_eff <= 1.001) else anchor + s_eff * (w[0] - anchor)
+                tol = 0.7 if is_fixed else 1.5
                 m = [t for t in awords_e if t[4] == w[4]
                      and abs(t[3] - w[3]) <= 1.5 and abs(t[0] - ex0) <= tol]
                 if not m:
-                    kind = "margin mark" if is_mark else "body word"
+                    kind = "fixed row/mark" if is_fixed else "body word"
                     fails.append(f"p{pi+1}: {kind} not at expected x={ex0:.1f} "
                                  f"(y={w[3]:.1f}): {w[4][:20]!r}")
             for L in blines:
+                s_line = 1.0 if L.get("furn") else s_eff
                 for sp in L["spans"]:
                     if sp["x1"] <= 70 or sp["x0"] >= marginStart:
                         continue  # pure margin mark: position covered above
@@ -331,9 +386,9 @@ def main():
                     bx1 = min(sp["x1"], marginStart)
                     if bx1 - bx0 < 4:
                         continue
-                    exp_size = sp["size"] if s_eff <= 1.001 else s_eff * sp["size"]
-                    win0 = bx0 if s_eff <= 1.001 else anchor + s_eff * (bx0 - anchor)
-                    win1 = bx1 if s_eff <= 1.001 else anchor + s_eff * (bx1 - anchor)
+                    exp_size = sp["size"] if s_line <= 1.001 else s_line * sp["size"]
+                    win0 = bx0 if s_line <= 1.001 else anchor + s_line * (bx0 - anchor)
+                    win1 = bx1 if s_line <= 1.001 else anchor + s_line * (bx1 - anchor)
                     # judge by the candidate covering most of the window: a
                     # margin-mark span (leading-space bbox) can sit inside the
                     # mapped body window without owning it
@@ -349,7 +404,7 @@ def main():
                     r = best["size"] / sp["size"]
                     ratios.append(r)
                     if abs(best["size"] - exp_size) > 0.05 * exp_size:
-                        fails.append(f"p{pi+1}: body size {r:.3f}x != {s_eff}x at y={sp['y']:.1f}: "
+                        fails.append(f"p{pi+1}: body size {r:.3f}x != {s_line}x at y={sp['y']:.1f}: "
                                      f"{sp['text'][:20]!r}")
         else:
             # --- (c) enlarged dialogue: line-level scale + unmoved baseline.

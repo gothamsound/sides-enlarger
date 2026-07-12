@@ -152,7 +152,7 @@ PAGES = [
         ("action", "Sam hits the floor. The door SLAMS open: a MERC in"),
         ("action", "tactical gear, weapon up."),
         ("blank",),
-        ("cue", "MERC #1"),
+        ("starcue", "MERC #1"),
         ("dial", "Everybody stay where you are!"),
         ("stardial", "Hands where I can see them, all of you, now!"),
         ("blank",),
@@ -230,6 +230,13 @@ def main():
             if kind == "stardial":
                 # dialogue line with a revision star out in the right margin
                 c.drawString(X_DIAL + drift, y, tok[1])
+                c.drawString(W - 40 + drift, y, "*")
+                y -= LEAD
+                continue
+            if kind == "starcue":
+                # character cue with a revision star ("TRACY  *"): must still
+                # read as a cue, and the star must never scale
+                c.drawString(X_CUE + drift, y, tok[1])
                 c.drawString(W - 40 + drift, y, "*")
                 y -= LEAD
                 continue

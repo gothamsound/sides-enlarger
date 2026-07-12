@@ -288,17 +288,25 @@
     const letters = (t || '').replace(/[^A-Za-z]/g, '');
     return letters.length >= 2 && letters === letters.toUpperCase();
   };
-  const isCueLine = (L, band) =>
-    L.segments.length === 1 &&
-    capsy(L.text) && L.text.trim().length <= 42 &&
-    L.x0 >= band[0] && L.x0 <= band[1] &&
-    !/\b(INT|EXT)\s*[.\/]/.test(L.text) &&
-    !/(CUT TO|FADE (IN|OUT)|DISSOLVE)/.test(L.text);
+  // A cue may carry revision marks in the far-right margin ("TRACY  *"):
+  // those margin segments must not disqualify it. pageW=0 keeps the strict
+  // single-segment rule (calibration's first pass has no page context).
+  const isCueLine = (L, band, pageW) => {
+    const segs = pageW
+      ? L.segments.filter(sg => sg.x0 < pageW - 80)
+      : L.segments;
+    if (segs.length !== 1 || segs[0] !== L.segments[0]) return false;
+    const text = segs[0].text;
+    return capsy(text) && text.trim().length <= 42 &&
+      L.x0 >= band[0] && L.x0 <= band[1] &&
+      !/\b(INT|EXT)\s*[.\/]/.test(text) &&
+      !/(CUT TO|FADE (IN|OUT)|DISSOLVE)/.test(text);
+  };
 
   function calibrate(pages) {
     const CUE_BAND = [200, 340]; // 2.8"–4.7" initial guess, then refined
     const cueXs = [];
-    for (const P of pages) for (const L of P.lines) if (isCueLine(L, CUE_BAND)) cueXs.push(L.x0);
+    for (const P of pages) for (const L of P.lines) if (isCueLine(L, CUE_BAND, P.width)) cueXs.push(L.x0);
     if (cueXs.length < 2) return null;
     const cueX = median(cueXs);
     // dialogue x0: lines directly below a cue, indented left of it.
@@ -308,7 +316,7 @@
     const dialXs = [];
     for (const P of pages) {
       for (let i = 0; i < P.lines.length; i++) {
-        if (!isCueLine(P.lines[i], [cueX - 12, cueX + 12])) continue;
+        if (!isCueLine(P.lines[i], [cueX - 12, cueX + 12], P.width)) continue;
         const nxt = P.lines[i + 1];
         if (nxt && P.lines[i].y - nxt.y < 3 * LEAD && !/^\(/.test(nxt.text.trim()) &&
             nxt.x0 > cueX - 130 && nxt.x0 < cueX - 30) dialXs.push(nxt.x0);
@@ -380,11 +388,14 @@
     for (const L of P.lines) {
       if (prevY !== null && prevY - L.y > 28) { inBlock = false; cur = null; } // big vertical gap
       prevY = L.y;
-      const dualCueRow = L.segments.length >= 2 &&
-        L.segments.every(s => capsy(s.text) && s.text.trim().length <= 30);
+      // a cue with a revision star in the margin is 2 segments but NOT dual:
+      // dual detection looks at body segments only
+      const bodySegs = L.segments.filter(sg => sg.x0 < P.width - 80);
+      const dualCueRow = bodySegs.length >= 2 &&
+        bodySegs.every(s => capsy(s.text) && s.text.trim().length <= 30);
       if (dualCueRow) {
         L.cls = 'dual'; dualMode = true; inBlock = false; cur = null; P.hasDual = true;
-        for (const s of L.segments) {
+        for (const s of bodySegs) {
           const n = normalizeCueName(s.text);
           // scene numbers print in both margins of a slugline and read as a
           // "dual cue" row; a spaceless letter+digit run is never a character
@@ -396,8 +407,9 @@
         if (L.segments.length >= 2) { L.cls = 'dual'; P.hasDual = true; continue; }
         dualMode = false;
       }
-      if (isCueLine(L, [cal.cueX - 12, cal.cueX + 12])) {
+      if (isCueLine(L, [cal.cueX - 12, cal.cueX + 12], P.width)) {
         L.cls = 'cue'; inBlock = true;
+        setDialExtent(L, P.width); // cue extents/star cap for scaling
         cur = { name: normalizeCueName(L.text), cue: L, lines: [] };
         P.blocks.push(cur);
         continue;
@@ -436,7 +448,7 @@
     const C = dialX + colW / 2;
     let s = requested;
     for (const L of P.lines) {
-      if (L.cls !== 'dialogue' || L.enlarge === false) continue;
+      if (!((L.cls === 'dialogue' || L.cls === 'cue') && L.enlarge !== false)) continue;
       const x0 = L.dx0 != null ? L.dx0 : L.x0;
       const x1 = L.dx1 != null ? L.dx1 : L.x1;
       // left edge: C + s*(x0 - C) >= EDGE
@@ -805,7 +817,7 @@
     const beginScaledIfDialogue = () => {
       if (scaledRun) return; // continuing same run: advances already scaled
       const hit = classifyShow();
-      if (!hit || hit.L.cls !== 'dialogue' || hit.L.enlarge === false || sPage <= 1.001) return;
+      if (!hit || (hit.L.cls !== 'dialogue' && hit.L.cls !== 'cue') || hit.L.enlarge === false || sPage <= 1.001) return;
       if (collect) { // measure mode: report line + active clip, mutate nothing
         collect.push({ L: hit.L, clipLo, clipHi, clipUnknown });
         return;
@@ -918,6 +930,35 @@
     return { out: out.join('\n'), changed: changedHere, bail: false };
   }
 
+  // Header/footer furniture for whole-page mode: rows in the top/bottom page
+  // zones whose digit-stripped text repeats on at least half the pages (show
+  // name headers, CONTINUED: rows, (CONTINUED) footers, page-number rows).
+  // Furniture is page identity: it never scales, and its tight internal line
+  // gaps must not cap the body's enlargement.
+  function markFurniture(pages) {
+    const zoneOf = (L, P) => (L.y > P.height * 0.85 ? 'top' : (L.y < P.height * 0.12 ? 'bot' : null));
+    const keyOf = L => L.text.replace(/[0-9]/g, '').replace(/\s+/g, ' ').trim().toUpperCase();
+    const seen = new Map(); // zone+key -> Set of page indexes
+    for (const P of pages) {
+      for (const L of P.lines) {
+        const z = zoneOf(L, P);
+        if (!z || L.cls === 'dialogue' || L.cls === 'cue') continue;
+        const k = z + '|' + keyOf(L);
+        if (!seen.has(k)) seen.set(k, new Set());
+        seen.get(k).add(P.index);
+      }
+    }
+    const need = Math.max(2, Math.ceil(pages.length / 2));
+    for (const P of pages) {
+      for (const L of P.lines) {
+        const z = zoneOf(L, P);
+        if (!z || L.cls === 'dialogue' || L.cls === 'cue') continue;
+        const k = keyOf(L);
+        if (!k || (seen.get(z + '|' + k) || new Set()).size >= need) L.furn = true;
+      }
+    }
+  }
+
   // ---------- highlighting ----------
   // Translucent-pastel effect via a Multiply-blend fill painted AFTER the page
   // content: white paper becomes the pastel, black glyphs stay black, and any
@@ -974,7 +1015,7 @@
       for (const L of [B.cue, ...B.lines]) {
         const scaled = s > 1.001 && (pageAnchor != null
           ? L.ax0 != null
-          : (L.cls === 'dialogue' && L.enlarge !== false));
+          : ((L.cls === 'dialogue' || L.cls === 'cue') && L.enlarge !== false));
         const eff = scaled ? s : 1;
         const lx0 = pageAnchor != null && L.ax0 != null ? L.ax0 : (L.dx0 != null ? L.dx0 : L.x0);
         const lx1 = pageAnchor != null && L.ax1 != null ? L.ax1 : (L.dx1 != null ? L.dx1 : L.x1);
@@ -1082,15 +1123,18 @@
       cal.colW = colW;
       const anchorC = cal.dialX + colW / 2; // uniform-scale anchor (see pageScale)
       report.characters = collectCharacters(pages);
-      if (enlargeSet) {
-        for (const P of pages) {
-          for (const B of (P.blocks || [])) {
-            const on = enlargeSet.has(B.name);
-            for (const L of B.lines) L.enlarge = on;
-          }
-          // defensive: any dialogue line outside a block stays untouched
-          for (const L of P.lines) if (L.cls === 'dialogue' && L.enlarge === undefined) L.enlarge = false;
+      // the character name grows with its block: a block's cue is eligible
+      // whenever the block has eligible dialogue (a bare cue-shaped label
+      // with no dialogue under it never scales)
+      for (const P of pages) {
+        for (const B of (P.blocks || [])) {
+          const on = (enlargeSet ? enlargeSet.has(B.name) : true) &&
+            B.lines.some(l => l.cls === 'dialogue');
+          B.cue.enlarge = on;
+          if (enlargeSet) for (const L of B.lines) L.enlarge = on;
         }
+        // defensive: any dialogue line outside a block stays untouched
+        if (enlargeSet) for (const L of P.lines) if (L.cls === 'dialogue' && L.enlarge === undefined) L.enlarge = false;
       }
       if (wantHl) {
         report.highlights = {};
@@ -1198,14 +1242,16 @@
 
       if (mode === 'page') {
         // "Make it all bigger": every body text line grows around its own
-        // unmoved baseline, spreading horizontally from the page's content
-        // center, so stage direction runs edge to edge and dialogue widens by
-        // the same factor. Margin furniture (left scene numbers, revision
-        // stars, page numbers past pageW-80) stays put exactly. Growth is
-        // capped by the page edges, by margin marks on the same line, and by
-        // line spacing so ascenders and descenders of adjacent lines don't
-        // collide. Baselines never move, so parity stays structural.
+        // unmoved baseline under one per-page horizontal map x' = s*x + t,
+        // fitted so the widest stage-direction line spans the full printable
+        // width and dialogue widens by the same factor. Margin furniture
+        // (left scene numbers, revision stars, page numbers) and repeated
+        // header/footer rows stay put exactly. Growth is capped by the page
+        // edges, margin marks, clips, and line spacing so ascenders and
+        // descenders of adjacent lines don't collide. Baselines never move,
+        // so parity stays structural.
         const E = 10, ML = 70;
+        markFurniture(pages);
         for (let i = 0; i < pdfPages.length; i++) {
           const P = pages[i];
           const page = pdfPages[i];
@@ -1221,15 +1267,17 @@
             continue;
           }
 
-          // split each line: body items scale; margin-mark items don't.
-          // Item-level split by x thresholds (NOT gap-based segments): left
-          // scene numbers sit closer than a segment gap to the slug text and
-          // must never ride along with the body.
+          // split each line: body items scale; margin-mark items and
+          // header/footer furniture don't. Item-level split by x thresholds
+          // (NOT gap-based segments): left scene numbers sit closer than a
+          // segment gap to the slug text and must never ride with the body.
           const body = [];
+          const sRows = []; // all printed rows, for the line-spacing fit
           let bx0 = Infinity, bx1 = -Infinity;
           for (const L of P.lines) {
-            const bs = L.items.filter(t => t.x + t.w > ML && t.x < marginR);
-            if (!bs.length) { L.ax0 = L.ax1 = null; continue; }
+            if (!L.items.length) continue;
+            const bs = L.furn ? [] : L.items.filter(t => t.x + t.w > ML && t.x < marginR);
+            if (!bs.length) { L.ax0 = L.ax1 = null; sRows.push({ L, fixed: true }); continue; }
             L.ax0 = Math.min(...bs.map(t => t.x));
             L.ax1 = Math.max(...bs.map(t => t.x + t.w));
             const lm = L.items.filter(t => t.x + t.w <= ML);
@@ -1238,32 +1286,34 @@
             L.rightStop = rm.length ? Math.min(...rm.map(t => t.x)) - 4 : P.width - E;
             bx0 = Math.min(bx0, L.ax0); bx1 = Math.max(bx1, L.ax1);
             body.push(L);
+            sRows.push({ L, fixed: false });
           }
           if (!body.length) { pageReport.appliedScale = 1; continue; }
-          const anchor = (bx0 + bx1) / 2;
-          pageReport.anchor = Math.round(anchor * 100) / 100;
 
-          // width limit: page edges and same-line margin marks
-          let sW = requested;
-          for (const L of body) {
-            if (L.ax0 < anchor) sW = Math.min(sW, (anchor - L.leftStop) / (anchor - L.ax0));
-            if (L.ax1 > anchor) sW = Math.min(sW, (L.rightStop - anchor) / (L.ax1 - anchor));
-          }
           // spacing limit: descender above + ascender below <= baseline gap
-          // (Courier metrics ~0.157/0.629 em, held slightly safe)
+          // (Courier metrics ~0.157/0.629 em, held slightly safe). Fixed rows
+          // (furniture, margin marks) don't scale, so only the scaled side of
+          // a mixed pair consumes the gap.
           let sV = requested;
-          const rows = [...body].sort((p, q) => q.y - p.y);
-          for (let k = 0; k + 1 < rows.length; k++) {
-            const gap = rows[k].y - rows[k + 1].y;
+          sRows.sort((p, q) => q.L.y - p.L.y);
+          for (let k = 0; k + 1 < sRows.length; k++) {
+            const gap = sRows[k].L.y - sRows[k + 1].L.y;
             if (gap < 6) continue; // same visual row (dual columns etc.)
-            const su = median(rows[k].items.map(t => t.size)) || 12;
-            const sl = median(rows[k + 1].items.map(t => t.size)) || 12;
-            sV = Math.min(sV, gap / (0.16 * su + 0.64 * sl));
+            const du = 0.16 * (median(sRows[k].L.items.map(t => t.size)) || 12);
+            const al = 0.64 * (median(sRows[k + 1].L.items.map(t => t.size)) || 12);
+            let lim = Infinity;
+            if (!sRows[k].fixed && !sRows[k + 1].fixed) lim = gap / (du + al);
+            else if (sRows[k].fixed && !sRows[k + 1].fixed) lim = al > 0.01 ? (gap - du) / al : Infinity;
+            else if (!sRows[k].fixed && sRows[k + 1].fixed) lim = du > 0.01 ? (gap - al) / du : Infinity;
+            sV = Math.min(sV, lim);
           }
 
           // every body line becomes an eligible "dialogue" proxy spanning its
-          // body extent, anchored at the page content center
-          const proxies = body.map(L => ({ y: L.y, x0: L.ax0, x1: L.ax1, dx0: L.ax0, dx1: L.ax1, cls: 'dialogue' }));
+          // body extent, carrying its own horizontal stops
+          const proxies = body.map(L => ({
+            y: L.y, x0: L.ax0, x1: L.ax1, dx0: L.ax0, dx1: L.ax1,
+            cls: 'dialogue', leftStop: L.leftStop, rightStop: L.rightStop,
+          }));
           const resolved = ctx.lookup(page.node.get(N('Contents')));
           const streams = [];
           if (resolved instanceof PDFLib.PDFArray) {
@@ -1273,32 +1323,65 @@
           for (const st of streams) latin += latinOf(decodeStream(st)) + '\n';
           const pageRes = page.node.Resources ? page.node.Resources() : ctx.lookup(page.node.get(N('Resources')));
 
+          // the horizontal map is x' = s*x + t; find the largest s (then a t)
+          // that keeps every body line inside its stops
+          const tRange = s => {
+            let lo = -Infinity, hi = Infinity;
+            for (const pr of proxies) {
+              lo = Math.max(lo, pr.leftStop - s * pr.dx0);
+              hi = Math.min(hi, pr.rightStop - s * pr.dx1);
+            }
+            return [lo, hi];
+          };
+          const maxFeasible = () => {
+            let loS = 1, hiS = requested;
+            const r = tRange(hiS);
+            if (r[0] <= r[1] + 1e-6) return hiS;
+            for (let it = 0; it < 24; it++) {
+              const mid = (loS + hiS) / 2;
+              const rm = tRange(mid);
+              if (rm[0] <= rm[1] + 1e-6) loS = mid; else hiS = mid;
+            }
+            return loS;
+          };
+          const sGeoNoClip = maxFeasible();
+
           // clip limit (measure pass): text must never grow out of its clip
-          // rect (table cells, row bands) or it gets cut off invisibly
-          let sClip = requested;
+          // rect (table cells, row bands) or it gets cut off invisibly. Clips
+          // tighten the per-line stops before the final fit.
+          let clipBlocked = false;
           if (requested > 1.001) {
             const constraints = [];
             const mstats = { scaledOps: 0, warnings: [] };
-            rewriteLevel(latin, [1, 0, 0, 1, 0, 0], pageRes, proxies, requested, anchor, mstats, new Set(), constraints);
+            rewriteLevel(latin, [1, 0, 0, 1, 0, 0], pageRes, proxies, requested, 0, mstats, new Set(), constraints);
             for (const c of constraints) {
-              if (c.clipUnknown) { sClip = 1; break; }
-              if (c.clipHi < Infinity && c.L.dx1 - anchor > 1) sClip = Math.min(sClip, (c.clipHi - anchor) / (c.L.dx1 - anchor));
-              if (c.clipLo > -Infinity && anchor - c.L.dx0 > 1) sClip = Math.min(sClip, (anchor - c.clipLo) / (anchor - c.L.dx0));
+              if (c.clipUnknown) { clipBlocked = true; break; }
+              if (c.clipLo > -Infinity) c.L.leftStop = Math.max(c.L.leftStop, c.clipLo + 0.5);
+              if (c.clipHi < Infinity) c.L.rightStop = Math.min(c.L.rightStop, c.clipHi - 0.5);
             }
           }
+          const sGeo = clipBlocked ? 1 : maxFeasible();
 
-          const s = Math.max(1, Math.floor(Math.min(requested, sW, sV, sClip) * 100) / 100);
+          const s = Math.max(1, Math.floor(Math.min(requested, sV, sGeo) * 100) / 100);
           pageReport.appliedScale = s;
           if (s < requested - 0.005) {
-            const binding = Math.min(sW, sV, sClip);
-            pageReport.warnings.push(binding === sClip && sClip < Math.min(sW, sV)
+            pageReport.warnings.push(sGeo < sGeoNoClip - 0.005 && sGeo <= sV
               ? `clipped layout (table cells) limits enlargement to ${s.toFixed(2)}x on this page`
-              : (sV < sW
+              : (sV <= sGeo
                 ? `line spacing limits enlargement to ${s.toFixed(2)}x on this page`
                 : `text reaches the page edge at ${s.toFixed(2)}x on this page`));
           }
 
           if (s > 1.001) {
+            // place the map: center the grown body in its feasible band, and
+            // express s*x + t as the equivalent anchor A = t/(1-s) so the
+            // rewriter, highlights and verifier share one form
+            const [tLo, tHi] = tRange(s);
+            const tCenter = P.width / 2 - s * (bx0 + bx1) / 2;
+            const t = Math.min(Math.max(tCenter, tLo), tHi);
+            const anchor = t / (1 - s);
+            pageReport.anchor = Math.round(anchor * 100) / 100;
+
             const stats = { scaledOps: 0, warnings: [] };
             const res = rewriteLevel(latin, [1, 0, 0, 1, 0, 0], pageRes, proxies, s, anchor, stats, visitedForms);
             for (const w of stats.warnings) if (pageReport.warnings.indexOf(w) === -1) pageReport.warnings.push(w);
@@ -1309,17 +1392,23 @@
               const ref = ctx.register(ctx.flateStream(bytesOfLatin(res.out)));
               page.node.set(N('Contents'), ref);
             }
-          }
 
-          if (wantHl) {
-            const rects = highlightRectsForPage(P, cal, pageReport.appliedScale, hl, anchor);
+            if (wantHl) {
+              const rects = highlightRectsForPage(P, cal, pageReport.appliedScale, hl, anchor);
+              if (rects.length) {
+                paintHighlights(page, rects);
+                pageReport.highlighted = rects.map(r => r.name);
+              }
+            }
+          } else if (wantHl) {
+            const rects = highlightRectsForPage(P, cal, 1, hl, 0);
             if (rects.length) {
               paintHighlights(page, rects);
               pageReport.highlighted = rects.map(r => r.name);
             }
-            if ((P.dualNames || []).some(n => hl[n] != null)) {
-              pageReport.warnings.push('a highlighted character appears in a dual-dialogue block on this page — dual dialogue is not highlighted');
-            }
+          }
+          if (wantHl && (P.dualNames || []).some(n => hl[n] != null)) {
+            pageReport.warnings.push('a highlighted character appears in a dual-dialogue block on this page — dual dialogue is not highlighted');
           }
         }
         const outBytes = await pdfDoc.save({ useObjectStreams: false });
@@ -1353,7 +1442,7 @@
             for (const st of streams) latin += latinOf(decodeStream(st)) + '\n';
 
             const pageRes = page.node.Resources ? page.node.Resources() : ctx.lookup(page.node.get(N('Resources')));
-            const dialogLines = P.lines.filter(l => l.cls === 'dialogue' || l.cls === 'more' || l.cls === 'dual');
+            const dialogLines = P.lines.filter(l => l.cls === 'dialogue' || l.cls === 'cue' || l.cls === 'more' || l.cls === 'dual');
             const stats = { scaledOps: 0, warnings: [] };
             const res = rewriteLevel(latin, [1, 0, 0, 1, 0, 0], pageRes, dialogLines, s, anchorC, stats, visitedForms);
             for (const w of stats.warnings) if (pageReport.warnings.indexOf(w) === -1) pageReport.warnings.push(w);

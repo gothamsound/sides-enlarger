@@ -99,16 +99,17 @@ that's needed for now. If it gets popular we can add real access control later.
 
 ## What it changes vs. leaves alone
 
-**Enlarges:** spoken dialogue, and the parentheticals inside a dialogue block.
+**Enlarges:** spoken dialogue, the parentheticals inside a dialogue block, and
+the character name above it.
 
 **Highlights (opt-in):** the blocks of any character you assign a color, painted
 behind the text with a multiply blend so the words stay crisp, selectable and
 printable; the fixed palette is light enough that black-and-white printing keeps
 full contrast.
 
-**Leaves exactly in place:** scene headings (sluglines), action, character cue
-names, page headers, page numbers, scene numbers, revision stars (the `*` marks in
-the margin), watermarks, and anything else.
+**Leaves exactly in place:** scene headings (sluglines), action, page headers,
+page numbers, scene numbers, revision stars (the `*` marks in the margin),
+watermarks, and anything else.
 
 It figures out what's dialogue **by where it sits on the page** (the indented
 dialogue column, directly under a character cue), calibrated per document — not by
