@@ -15,10 +15,14 @@ there is no backend.
 
 ## Non-negotiable constraints (do not regress these)
 1. **Page-for-page parity.** Content must never reflow across pages. On set,
-   "page 34" must stay page 34. All modes rescale text runs in place around
-   each line's own baseline — nothing ever moves vertically, so nothing can
-   reflow. If enlargement wouldn't fit a page, **back off the scale for that
-   page and report it**; never push content onto another page.
+   "page 34" must stay page 34. All enlargement modes rescale text runs in
+   place around each line's own baseline — nothing ever moves vertically, so
+   nothing can reflow. If enlargement wouldn't fit a page, **back off the
+   scale for that page and report it**; never push content onto another page.
+   The ONE sanctioned exception is Reader mode (`opts.mode: 'reader'`), which
+   reflows by design: it must mark where each original page begins (gray
+   "SCRIPT PAGE N" rules from the printed header page numbers) and stamp
+   every page with a footer saying the numbering doesn't match.
 2. **Confidentiality / offline.** Scripts must never leave the device. No network
    calls, no CDNs, no telemetry, no cloud. Everything (pdf.js, its worker, pdf-lib,
    the engine) is inlined into `index.html`. Keep it that way.
@@ -118,6 +122,15 @@ renderer re-segmenting enlarged lines). It also writes
   1.15-1.25x on real sides. Pages with ZERO classified dialogue (title pages,
   coverage, call sheets, revision tables) are never enlarged in any mode;
   they pass through byte-identical with a note.
+- **Reader mode** (`opts.mode: 'reader'`): builds a verbatim element stream
+  (slug / action / cue / paren / dialogue / transition, dual emitted
+  sequentially) from body segments, dropping furniture, margin marks,
+  (MORE)/(CONTINUED) and rotated watermark items (`item.rot`), and skipping
+  no-dialogue pages; then renders a fresh Times PDF at `12 * scale` pt with
+  pdf-lib (wrapping re-done at reader width). Highlights paint as pastel
+  strips UNDER the text (we own the background). The verifier's contract for
+  reader mode is different: no body word lost, nothing invented beyond the
+  reported `readerBreaks` markers and footers, stars dropped, size correct.
 - **Highlighting**: one rounded rect per block of an assigned character,
   painted as a Multiply-blend fill in a content stream APPENDED after the page
   content (so white background fills inside forms can't hide it; glyphs stay

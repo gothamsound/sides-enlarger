@@ -55,6 +55,11 @@
     }
     for (const L of lines) {
       L.items.sort((p, q) => p.x - q.x);
+      // double-struck "bold" (the same string drawn twice in place) reads once
+      L.items = L.items.filter((it, i) => {
+        const p = L.items[i - 1];
+        return !(p && p.str === it.str && Math.abs(p.x - it.x) < 1.2);
+      });
       L.y = median(L.items.map(i => i.y));
       L.x0 = L.items[0].x;
       L.x1 = Math.max(...L.items.map(i => i.x + i.w));
@@ -730,7 +735,11 @@
   // gaps must not cap the body's enlargement.
   function markFurniture(pages) {
     const zoneOf = (L, P) => (L.y > P.height * 0.85 ? 'top' : (L.y < P.height * 0.12 ? 'bot' : null));
-    const keyOf = L => L.text.replace(/[0-9]/g, '').replace(/\s+/g, ' ').trim().toUpperCase();
+    // key on words with 3+ letters only: scene numbers, page numbers, dates
+    // and (2)-style suffixes vary per page and must not split the group
+    const keyOf = L => L.text.split(/\s+/)
+      .filter(t => t.replace(/[^A-Za-z]/g, '').length >= 3)
+      .join(' ').toUpperCase();
     const seen = new Map(); // zone+key -> Set of page indexes
     for (const P of pages) {
       for (const L of P.lines) {
@@ -750,6 +759,172 @@
         if (!k || (seen.get(z + '|' + k) || new Set()).size >= need) L.furn = true;
       }
     }
+  }
+
+  // ---------- reader mode (reflow) ----------
+  // Streams the script as elements (slug / action / cue / paren / dialogue /
+  // transition) in reading order. Page furniture (headers, footers, page
+  // numbers, revision stars, (MORE)/(CONTINUED)) and rotated watermark text
+  // are dropped; hard line wraps are removed so the renderer can re-wrap the
+  // verbatim text at the reader size. Pages without dialogue (title pages,
+  // coverage, call sheets) are skipped entirely.
+  function buildReaderElements(pages) {
+    const els = [];
+    const push = el => { if (el && el.text && el.text.trim()) els.push(el); };
+    const textFromItems = items => {
+      // content order, not x order: kerned per-glyph text can overlap
+      // slightly and x-sorting would scramble the reading order
+      const inOrder = [...items].sort((a2, b2) => (a2.seq || 0) - (b2.seq || 0));
+      const kept = [];
+      for (const it of inOrder) {
+        // double-struck "bold" text: the same string drawn twice in place
+        if (kept.some(p => p.str === it.str && Math.abs(p.x - it.x) < 1.2)) continue;
+        kept.push(it);
+      }
+      let out = '', px = null;
+      for (const it of kept) {
+        if (px != null) {
+          const gap = it.x - px;
+          // big |gap| either way = a word boundary or an out-of-order jump
+          if (gap > Math.max(1.5, 0.25 * (it.size || 12)) || gap < -0.6 * (it.size || 12)) out += ' ';
+        }
+        out += it.str;
+        px = it.x + it.w;
+      }
+      return out.replace(/\s+/g, ' ').trim();
+    };
+    // the printed page number of a source page (header zone; "34." style
+    // dotted tokens beat bare digits, which may be episode/scene numbers)
+    const pageLabelOf = P => {
+      const dotted = [], plain = [];
+      for (const L of P.lines) {
+        if (L.y < P.height * 0.85) continue;
+        for (const sg of L.segments) {
+          for (const tok of sg.text.trim().split(/\s+/)) {
+            if (/^\d{1,4}[A-Z]{0,2}\.$/.test(tok)) dotted.push(tok.slice(0, -1));
+            else if (/^\d{1,4}[A-Z]{0,2}$/.test(tok)) plain.push(tok);
+          }
+        }
+      }
+      if (dotted.length) return dotted[dotted.length - 1];
+      if (plain.length) return plain[plain.length - 1];
+      return String(P.index);
+    };
+    for (const P of pages) {
+      if (!P.lines.some(l => l.cls === 'dialogue')) continue;
+      // mark where this original script page starts, so on-set page calls
+      // can be found in reader view
+      const label = pageLabelOf(P);
+      els.push({ t: 'break', text: label });
+      const ML = 70, marginR = P.width - 80;
+      const lineName = new Map();
+      for (const B of (P.blocks || [])) {
+        lineName.set(B.cue, B.name);
+        for (const l of B.lines) lineName.set(l, B.name);
+      }
+      let para = null, paren = null, dual = null, prevY = null;
+      const flushPara = () => {
+        if (para) { push(para); para = null; }
+        if (paren) { push(paren); paren = null; }
+      };
+      const flushDual = () => {
+        if (!dual) return;
+        for (const col of [dual.left, dual.right]) {
+          if (col.cue) push({ t: 'cue', text: col.cue, name: normalizeCueName(col.cue) });
+          push({ t: 'dialogue', text: col.text.replace(/\s+/g, ' ').trim(), name: normalizeCueName(col.cue || '') });
+        }
+        dual = null;
+      };
+      for (const L of P.lines) {
+        if (L.furn) continue;
+        const live = L.items.filter(t => !t.rot && !/^\*+$/.test(t.str.trim()));
+        // words are included or excluded WHOLE: a glyph cluster that starts
+        // in the body keeps its contiguous glyphs even past the margin
+        // boundary (otherwise per-glyph docs lose trailing letters)
+        const bodyItems = [];
+        {
+          let prevEnd = null;
+          for (const t of live.filter(t2 => t2.x + t2.w > ML).sort((a2, b2) => a2.x - b2.x)) {
+            const wordGap = Math.max(1.5, 0.25 * (t.size || 12));
+            const cont = prevEnd != null && t.x - prevEnd < wordGap;
+            if (t.x < marginR || (cont && bodyItems.length)) {
+              bodyItems.push(t);
+              prevEnd = t.x + t.w;
+            } else prevEnd = null;
+          }
+        }
+        if (!bodyItems.length) continue;
+        const text = textFromItems(bodyItems);
+        if (!text) continue;
+        const bigGap = prevY != null && prevY - L.y > 20;
+        prevY = L.y;
+
+        if (L.cls === 'dual') {
+          flushPara();
+          if (!dual) dual = { left: { cue: '', text: '' }, right: { cue: '', text: '' } };
+          const leftT = textFromItems(bodyItems.filter(t => t.x < P.width / 2));
+          const rightT = textFromItems(bodyItems.filter(t => t.x >= P.width / 2));
+          if (!dual.left.cue && !dual.left.text.trim() && capsy(leftT)) {
+            dual.left.cue = leftT; dual.right.cue = rightT;
+          } else {
+            if (leftT) dual.left.text += ' ' + leftT;
+            if (rightT) dual.right.text += ' ' + rightT;
+          }
+          continue;
+        }
+        if (dual) flushDual();
+        if (L.cls === 'more') continue;
+
+        if (L.cls === 'cue') {
+          flushPara();
+          push({ t: 'cue', text, name: lineName.get(L) || normalizeCueName(text) });
+          continue;
+        }
+        if (L.cls === 'dialogue') {
+          const name = lineName.get(L) || null;
+          if (paren || /^\(/.test(text)) {
+            if (!paren) {
+              if (para) { push(para); para = null; }
+              paren = { t: 'paren', text, name };
+            } else paren.text += ' ' + text;
+            if (/\)\s*$/.test(text)) { push(paren); paren = null; }
+            continue;
+          }
+          if (para && para.t === 'dialogue' && para.name === name && !bigGap) para.text += ' ' + text;
+          else { flushPara(); para = { t: 'dialogue', text, name }; }
+          continue;
+        }
+        // 'other': slug / transition / action
+        if (/^(INT|EXT|I\/E|INT\/EXT|EST)[.\s\/]/.test(text)) {
+          flushPara();
+          const num = mk => {
+            const t2 = textFromItems(mk).trim();
+            return /^[A-Z]{0,3}\d+[A-Z0-9]*$/.test(t2) ? t2 : '';
+          };
+          const lnum = num(live.filter(t => t.x + t.w <= ML));
+          let rnum = num(live.filter(t => t.x >= marginR));
+          let slugText = text;
+          // some templates set the right scene number so close to the slug
+          // that it glues onto the text: peel a trailing copy of the number
+          const n2 = lnum || rnum;
+          if (n2 && slugText.endsWith(n2) && !slugText.endsWith(' ' + n2)) {
+            slugText = slugText.slice(0, -n2.length).trim();
+            if (!rnum) rnum = n2;
+          }
+          push({ t: 'slug', text: (lnum ? lnum + '  ' : '') + slugText + (rnum ? '  ' + rnum : '') });
+          continue;
+        }
+        if (/^(CUT TO|DISSOLVE|FADE|SMASH CUT|MATCH CUT|TIME CUT|END OF)/.test(text) && L.x0 > P.width / 2) {
+          flushPara();
+          push({ t: 'transition', text });
+          continue;
+        }
+        if (para && para.t === 'action' && !bigGap) para.text += ' ' + text;
+        else { flushPara(); para = { t: 'action', text }; }
+      }
+      flushPara(); flushDual();
+    }
+    return els;
   }
 
   // ---------- highlighting ----------
@@ -839,11 +1014,15 @@
         const tc = await page.getTextContent();
         const items = tc.items
           .filter(it => it.str && it.str.trim().length)
-          .map(it => ({
-            str: it.str,
-            x: it.transform[4], y: it.transform[5],
-            w: it.width, size: Math.hypot(it.transform[2], it.transform[3]),
-          }));
+          .map((it, seq) => {
+            const size = Math.hypot(it.transform[2], it.transform[3]);
+            return {
+              str: it.str, seq, // seq = content (reading) order
+              x: it.transform[4], y: it.transform[5],
+              w: it.width, size,
+              rot: Math.abs(it.transform[1]) > 0.05 * (size || 1), // watermarks
+            };
+          });
         for (const it of items) totalChars += it.str.length;
         pages.push({ index: p, width: vp.viewBox[2] - vp.viewBox[0], height: vp.viewBox[3] - vp.viewBox[1], lines: buildLines(items) });
       }
@@ -870,6 +1049,115 @@
       };
     }
 
+    // Reader mode renderer: verbatim element text re-wrapped at the reader
+    // size into a fresh PDF (clean serif, slug headings, centered cues,
+    // full-width dialogue/action). Deliberately breaks page parity; every
+    // page carries a footer saying so. Highlights paint as pastel strips
+    // UNDER the text (we own the white background here).
+    async function renderReader(elements, requested, hlMap, report) {
+      const doc = await PDFLib.PDFDocument.create();
+      const F = await doc.embedFont(PDFLib.StandardFonts.TimesRoman);
+      const FB = await doc.embedFont(PDFLib.StandardFonts.TimesRomanBold);
+      const FI = await doc.embedFont(PDFLib.StandardFonts.TimesRomanItalic);
+      const W = 612, H = 792, MX = 64, TOP = 60, BOT = 58;
+      const size = Math.round(12 * requested * 10) / 10;
+      const lh = Math.round(size * 1.42 * 10) / 10;
+      const colW = W - 2 * MX;
+      const sanitize = t =>
+        t.replace(/[­‐‑‒]/g, '-').replace(/[^\x20-\x7E -ÿ–—‘’“”…]/g, '?');
+      const wrap = (text, font, sz, width) => {
+        const out = [];
+        let cur = '';
+        for (const w0 of text.split(' ')) {
+          const t2 = cur ? cur + ' ' + w0 : w0;
+          if (!cur || font.widthOfTextAtSize(t2, sz) <= width) cur = t2;
+          else { out.push(cur); cur = w0; }
+        }
+        if (cur) out.push(cur);
+        return out;
+      };
+      let page = null, y = 0, readerPage = 0;
+      const gray = PDFLib.rgb(0.45, 0.45, 0.45);
+      const newPage = () => {
+        readerPage++;
+        page = doc.addPage([W, H]);
+        y = H - TOP;
+        page.drawText('READER MODE - reflowed text; page numbers do not match the shooting script',
+          { x: MX, y: 30, size: 7.5, font: F, color: gray });
+        const pn = String(readerPage);
+        page.drawText(pn, { x: W - MX - F.widthOfTextAtSize(pn, 9), y: 30, size: 9, font: F, color: gray });
+      };
+      newPage();
+      const ensure = h => { if (y - h < BOT) newPage(); };
+      const drawLines = (lines, font, sz, opts2) => {
+        for (const ln of lines) {
+          ensure(lh);
+          if (opts2.hl) {
+            page.drawRectangle({ x: MX - 6, y: y - lh + sz * 0.18, width: colW + 12, height: lh, color: opts2.hl });
+          }
+          const tw = font.widthOfTextAtSize(ln, sz);
+          const x = opts2.align === 'center' ? (W - tw) / 2 : (opts2.align === 'right' ? W - MX - tw : MX);
+          page.drawText(ln, { x, y: y - lh + sz * 0.32, size: sz, font });
+          y -= lh;
+        }
+      };
+      const rgbOf = i => PDFLib.rgb(PALETTE[i].rgb[0], PALETTE[i].rgb[1], PALETTE[i].rgb[2]);
+      report.readerBreaks = [];
+      for (const el of elements) {
+        const text = sanitize(el.text);
+        const hlIdx = el.name != null && hlMap[el.name] != null ? hlMap[el.name] : null;
+        const hl = hlIdx != null ? rgbOf(hlIdx) : null;
+        switch (el.t) {
+          case 'break': {
+            // original-script page marker: a labeled gray rule
+            report.readerBreaks.push(text);
+            const label = 'SCRIPT PAGE ' + text;
+            const sz = Math.max(8, size * 0.6);
+            ensure(lh * 2.2);
+            y -= lh * 0.6;
+            const tw = F.widthOfTextAtSize(label, sz);
+            const midY = y - sz * 0.35;
+            page.drawLine({ start: { x: MX, y: midY }, end: { x: (W - tw) / 2 - 9, y: midY }, thickness: 0.7, color: gray });
+            page.drawLine({ start: { x: (W + tw) / 2 + 9, y: midY }, end: { x: W - MX, y: midY }, thickness: 0.7, color: gray });
+            page.drawText(label, { x: (W - tw) / 2, y: midY - sz * 0.32, size: sz, font: F, color: gray });
+            y -= lh * 0.75;
+            break;
+          }
+          case 'slug': {
+            const lines = wrap(text, FB, size * 1.02, colW);
+            ensure(lh * (lines.length + 1.6)); // keep heading with what follows
+            y -= lh * 0.7;
+            drawLines(lines, FB, size * 1.02, {});
+            y -= lh * 0.2;
+            break;
+          }
+          case 'action':
+            y -= lh * 0.3;
+            drawLines(wrap(text, F, size, colW), F, size, {});
+            break;
+          case 'cue': {
+            const lines = wrap(text, F, size, colW);
+            ensure(lh * (lines.length + 2)); // keep the name with its lines
+            y -= lh * 0.45;
+            drawLines(lines, F, size, { align: 'center', hl });
+            break;
+          }
+          case 'paren':
+            drawLines(wrap(text, FI, size, colW * 0.8), FI, size, { align: 'center', hl });
+            break;
+          case 'dialogue':
+            drawLines(wrap(text, F, size, colW), F, size, { hl });
+            break;
+          case 'transition':
+            y -= lh * 0.3;
+            drawLines(wrap(text, F, size, colW), F, size, { align: 'right' });
+            break;
+        }
+      }
+      report.readerPages = doc.getPageCount();
+      return doc.save({ useObjectStreams: false });
+    }
+
     async function process(bytes, opts = {}) {
       const requested = Math.min(1.5, Math.max(1.0, opts.scale || 1.25));
       const { pages, totalChars } = await extract(bytes);
@@ -877,8 +1165,9 @@
       if (totalChars < 40) throw scannedError();
 
       // mode: 'dialogue' (default) scales dialogue runs in place around their
-      // baselines; 'page' zooms the ENTIRE page uniformly toward the margins.
-      const mode = opts.mode === 'page' ? 'page' : 'dialogue';
+      // baselines; 'page' zooms the ENTIRE page uniformly toward the margins;
+      // 'reader' reflows the script into new pages (parity deliberately off).
+      const mode = opts.mode === 'page' || opts.mode === 'reader' ? opts.mode : 'dialogue';
       // optional selective enlargement: only these characters' dialogue grows
       let enlargeSet = null;
       if (mode === 'dialogue' && opts.enlargeOnly != null) {
@@ -932,6 +1221,15 @@
       if (wantHl) {
         report.highlights = {};
         for (const n of Object.keys(hl)) report.highlights[n] = { palette: hl[n], key: PALETTE[hl[n]].key, rgb: PALETTE[hl[n]].rgb };
+      }
+
+      if (mode === 'reader') {
+        markFurniture(pages);
+        const elements = buildReaderElements(pages);
+        report.sourcePages = pages.length;
+        report.warnings.push('Reader mode reflows the script into new pages: page numbering does NOT match the original sides. Do not use it for on-set page references.');
+        const readerBytes = await renderReader(elements, requested, hl, report);
+        return { bytes: readerBytes, report };
       }
 
       const pdfDoc = await PDFLib.PDFDocument.load(bytes, { updateMetadata: false, ignoreEncryption: true });

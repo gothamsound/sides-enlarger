@@ -51,6 +51,16 @@ def get_lines(page):
                 spans.append({"x0": x0, "x1": x1, "y": round(sp["origin"][1], 2),
                               "size": sp["size"], "text": t})
     spans.sort(key=lambda s: (s["y"], s["x0"]))
+    # double-struck "bold" (same text drawn twice in place) reads once,
+    # mirroring the engine's item dedupe
+    deduped = []
+    for sp in spans:
+        p = deduped[-1] if deduped else None
+        if (p and p["text"] == sp["text"] and abs(p["x0"] - sp["x0"]) < 1.2
+                and abs(p["y"] - sp["y"]) <= 1.0):
+            continue
+        deduped.append(sp)
+    spans = deduped
     lines = []
     for sp in spans:
         if lines and abs(lines[-1]["y"] - sp["y"]) <= 2.0:
@@ -172,7 +182,8 @@ def mark_furniture(pages_lines, heights):
         return None
 
     def key(L):
-        return re.sub(r"\s+", " ", re.sub(r"[0-9]", "", L["text"])).strip().upper()
+        return " ".join(t for t in L["text"].split()
+                        if len(re.sub(r"[^A-Za-z]", "", t)) >= 3).upper()
 
     seen = defaultdict(set)
     for pi, lines in enumerate(pages_lines):
@@ -191,12 +202,101 @@ def mark_furniture(pages_lines, heights):
                 L["furn"] = True
 
 
+def reader_check(b, a, report, fails, notes):
+    """Reader mode deliberately breaks page parity. Contract instead:
+    every kept body word survives (no text lost), nothing is invented
+    beyond the known page-break markers/footers, revision stars and
+    furniture are dropped, and the text is at the reader size."""
+    import collections
+    before_cls = classify_doc(b)
+    mark_furniture(before_cls, [p.rect.height for p in b])
+    need = collections.Counter()
+    allb = collections.Counter()
+    for pi in range(len(b)):
+        W = b[pi].rect.width
+        lines = before_cls[pi]
+        has_dial = any(L.get("cls") == "dialogue" for L in lines)
+        # rotated watermark lines are dropped in reader view
+        rot_ys = []
+        for blk in b[pi].get_text("dict")["blocks"]:
+            if blk["type"] != 0:
+                continue
+            for ln in blk["lines"]:
+                if abs(ln["dir"][1]) > 0.05:
+                    for sp in ln["spans"]:
+                        rot_ys.append(sp["origin"][1])
+        words = b[pi].get_text("words")
+        for w in words:
+            if w[4].strip():
+                allb[w[4]] += 1
+        if not has_dial:
+            continue  # coverage/title pages are skipped in reader view
+        keep_rows = [L for L in lines if not L.get("furn") and L.get("cls") != "more"]
+        counted = set()  # double-struck "bold" words appear twice in place
+        for L in keep_rows:
+            if any(abs(L["y"] - ry) <= 3 for ry in rot_ys):
+                continue
+            for w in words:
+                if (abs(w[3] - L["y"]) <= 5.0 and w[2] > 70 and w[0] < W - 80
+                        and w[4].strip() and w[4] != "*"
+                        and not any(abs(w[3] - ry) <= 4 for ry in rot_ys)):
+                    k = (w[4], round(w[0]), round(w[3]))
+                    if k in counted:
+                        continue
+                    counted.add(k)
+                    need[w[4]] += 1
+    got = collections.Counter()
+    sizes = []
+    for pi in range(len(a)):
+        H = a[pi].rect.height
+        for w in a[pi].get_text("words"):
+            if w[3] < H - 45 and w[4].strip():
+                got[w[4]] += 1
+        for blk in a[pi].get_text("dict")["blocks"]:
+            if blk["type"] != 0:
+                continue
+            for ln in blk["lines"]:
+                for sp in ln["spans"]:
+                    if sp["bbox"][3] < H - 45 and sp["text"].strip() and sp["size"] > 9:
+                        sizes.append(sp["size"])
+    # subtract the known page-break markers before the invented check
+    for label in (report or {}).get("readerBreaks", []):
+        got.subtract(collections.Counter(["SCRIPT", "PAGE"] + str(label).split()))
+    got = +got
+    missing = need - got
+    for t, n in list(missing.items())[:8]:
+        fails.append(f"reader: text LOST: {t[:30]!r} x{n}")
+    if len(missing) > 8:
+        fails.append(f"reader: ... and {len(missing) - 8} more missing words")
+    invented = got - allb
+    for t, n in list(invented.items())[:8]:
+        fails.append(f"reader: text INVENTED: {t[:30]!r} x{n}")
+    if got.get("*"):
+        fails.append("reader: revision stars must be dropped")
+    req = (report or {}).get("requestedScale", 1.25)
+    med = statistics.median(sizes) if sizes else 0
+    notes.append(f"reader: {len(b)} script pages -> {len(a)} reader pages, "
+                 f"{len(report.get('readerBreaks', []))} page markers, median size {med:.1f}")
+    if abs(med - 12 * req) > 0.8:
+        fails.append(f"reader: median text size {med:.2f} != {12 * req:.2f}")
+
+
 def main():
     before_path, after_path = sys.argv[1], sys.argv[2]
     report = json.load(open(sys.argv[3])) if len(sys.argv) > 3 else None
 
     b, a = fitz.open(before_path), fitz.open(after_path)
     fails, notes = [], []
+
+    if (report or {}).get("mode") == "reader":
+        reader_check(b, a, report, fails, notes)
+        import os
+        outdir = os.environ.get("CHECK_RENDER_DIR") or os.path.dirname(after_path) or "."
+        os.makedirs(outdir, exist_ok=True)
+        for pi in range(len(a)):
+            a[pi].get_pixmap(dpi=110).save(os.path.join(outdir, f"reader_p{pi+1:02d}.png"))
+        notes.append(f"reader renders: {outdir}/reader_pNN.png")
+        report_and_exit(fails, notes)
 
     # 1. page parity
     if len(b) != len(a):

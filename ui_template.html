@@ -30,7 +30,12 @@
                 font-weight:600; cursor:pointer; border-right:1px solid var(--accentSoft); white-space:nowrap; }
   .seg button:last-child { border-right:0; }
   .seg button.on { background:var(--accent); color:#fff; }
-  @media (max-width:600px){ .seg button { padding:9px 9px; font-size:13px; } }
+  .segAlt { margin-left:10px; border-style:dashed; }
+  .segAlt button.on { background:var(--warn); border-color:var(--warn); }
+  .segAlt { border-color:var(--warn); }
+  .segAlt button { color:var(--warn); }
+  .segAlt button.on { color:#fff; }
+  @media (max-width:600px){ .seg button { padding:9px 9px; font-size:13px; } .segAlt { margin-left:0; } }
   .aa { border:1.5px solid #ccc; background:#fff; color:#999; border-radius:8px; font-size:13px;
         font-weight:700; padding:4px 8px; cursor:pointer; line-height:1; }
   .aa.on { border-color:var(--accent); background:var(--accent); color:#fff; }
@@ -77,6 +82,7 @@
   #pageNo { font-family:"Courier New",monospace; font-weight:700; }
   .pvRow { display:flex; gap:12px; }
   .pv { flex:1; min-width:0; }
+  .previews.readerMode .pv.orig { display:none; }
   .pv h3 { margin:0 0 6px; font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:#888; }
   .pv canvas { width:100%; height:auto; border:1px solid #ddd; border-radius:8px; background:#fff; display:block; }
   #donate { margin-top:34px; text-align:center; background:#fff; border:1px solid #e3ded2; border-radius:12px;
@@ -85,6 +91,9 @@
   #donate a { display:inline-block; padding:12px 22px; background:var(--accent); color:#fff; border-radius:10px;
               font-weight:700; text-decoration:none; font-size:15px; }
   #donate a:hover { filter:brightness(1.08); }
+  #donate .issueLine { margin:14px 0 0; font-size:13px; color:#777; }
+  #donate a.issueLink { display:inline; padding:0; background:none; color:var(--accent);
+                        font-weight:600; text-decoration:underline; font-size:13px; }
   footer { margin-top:26px; color:#999; font-size:13px; text-align:center; }
   @media (max-width:760px){ .pvRow { flex-direction:column; } }
   @media (max-width:600px){ header.brand { flex-direction:column; align-items:flex-start; gap:10px; }
@@ -115,12 +124,15 @@
     <span id="scaleVal">1.25&times;</span>
   </div>
 
-  <div class="controls">
+  <div class="controls" id="modeRow">
     <label id="modeLabel">Make bigger</label>
     <div class="seg" id="modeSeg" role="group" aria-labelledby="modeLabel">
       <button type="button" data-mode="all" class="on">All dialogue</button>
       <button type="button" data-mode="selected">Selected characters</button>
       <button type="button" data-mode="page">Everything</button>
+    </div>
+    <div class="seg segAlt" title="Reflows the script into large clean text. Page numbers change; original pages are marked inline.">
+      <button type="button" data-mode="reader">Reader mode</button>
     </div>
   </div>
 
@@ -150,7 +162,7 @@
         <button id="nextPg" aria-label="next page">&#8594;</button>
       </div>
       <div class="pvRow">
-        <div class="pv"><h3>Original</h3><canvas id="pvBefore"></canvas></div>
+        <div class="pv orig"><h3>Original</h3><canvas id="pvBefore"></canvas></div>
         <div class="pv"><h3>Enlarged</h3><canvas id="pvAfter"></canvas></div>
       </div>
     </div>
@@ -160,6 +172,9 @@
     <p>If this is working for you, please consider donating.</p>
     <a href="https://give.entertainmentcommunity.org/site/Donation2?df_id=12678&amp;12678.donation=form1&amp;mfc_pref=T"
        target="_blank" rel="noopener noreferrer">Donate to the Entertainment Community Fund</a>
+    <p class="issueLine">Something broken, or wishing for a feature?
+      <a class="issueLink" href="https://github.com/gothamsound/sides-enlarger/issues"
+         target="_blank" rel="noopener noreferrer">Report an issue or request a feature</a></p>
   </section>
 
   <footer>Everything runs in your browser — no uploads, no accounts, no tracking.</footer>
@@ -378,11 +393,13 @@
     scheduleProcess();
   }
   function syncModeSeg() {
-    Array.prototype.forEach.call(modeSeg.children, function (btn) {
+    var btns = document.getElementById('modeRow').querySelectorAll('[data-mode]');
+    Array.prototype.forEach.call(btns, function (btn) {
       btn.className = btn.getAttribute('data-mode') === prefs.enlargeMode ? 'on' : '';
     });
+    previews.classList.toggle('readerMode', prefs.enlargeMode === 'reader');
   }
-  modeSeg.addEventListener('click', function (e) {
+  document.getElementById('modeRow').addEventListener('click', function (e) {
     var m = e.target && e.target.getAttribute && e.target.getAttribute('data-mode');
     if (m && m !== prefs.enlargeMode) setMode(m);
   });
@@ -449,11 +466,16 @@
     prevPg.disabled = curPage <= 1;
     nextPg.disabled = curPage >= numPages;
     var seq = ++renderSeq;
-    renderPage(docB, pvB, curPage, seq);
+    if (curPage <= docB.numPages) renderPage(docB, pvB, curPage, seq);
     renderPage(docA, pvA, curPage, seq);
   }
   prevPg.addEventListener('click', function () { showPage(curPage - 1); });
   nextPg.addEventListener('click', function () { showPage(curPage + 1); });
+
+  function showPreviews() {
+    previews.classList.add('on');
+    previews.classList.toggle('readerMode', prefs.enlargeMode === 'reader');
+  }
 
   function setStatus(msg, isErr) {
     status.textContent = msg || '';
@@ -481,7 +503,7 @@
     (report.pages || []).forEach(function (p) {
       (p.highlighted || []).forEach(function (n) { painted[n] = true; });
     });
-    var parts = names.filter(function (n) { return painted[n]; })
+    var parts = names.filter(function (n) { return report.mode === 'reader' || painted[n]; })
       .map(function (n) { return n + ' (' + hl[n].key + ')'; });
     return parts.length ? ' Highlighted: ' + parts.join(', ') + '.' : '';
   }
@@ -496,6 +518,7 @@
     setTimeout(function () {
       var opts = { scale: s, highlights: activeHighlights() };
       if (prefs.enlargeMode === 'page') opts.mode = 'page';
+      else if (prefs.enlargeMode === 'reader') opts.mode = 'reader';
       else if (prefs.enlargeMode === 'selected') {
         opts.enlargeOnly = Object.keys(prefs.enlargeChars).filter(function (n) {
           return prefs.enlargeChars[n] && !isHidden(n);
@@ -512,20 +535,26 @@
         return openDoc(res.bytes).then(function (d) {
           docA = d; if (prevA) prevA.destroy();
           numPages = docA.numPages;
-          previews.className = 'previews on';
+          showPreviews();
           showPage(curPage);
           return res;
         });
       }).then(function (res) {
         if (!res) return;
-        var scaled = res.report.pages.filter(function (p) { return p.appliedScale > 1.001; }).length;
-        var what = res.report.mode === 'page' ? 'everything' : 'dialogue';
-        var note = (prefs.enlargeMode === 'selected' && !(opts.enlargeOnly && opts.enlargeOnly.length))
-          ? ' Tap "Aa" next to a character to choose whose dialogue grows.' : '';
-        setStatus('Done — ' + what + ' enlarged on ' + scaled + ' of ' + res.report.pages.length + ' pages.'
-                  + highlightSummary(res.report) + note);
+        if (res.report.mode === 'reader') {
+          setStatus('Done — reflowed ' + res.report.sourcePages + ' script pages into '
+                    + res.report.readerPages + ' reader pages (original pages marked inline).'
+                    + highlightSummary(res.report));
+        } else {
+          var scaled = res.report.pages.filter(function (p) { return p.appliedScale > 1.001; }).length;
+          var what = res.report.mode === 'page' ? 'everything' : 'dialogue';
+          var note = (prefs.enlargeMode === 'selected' && !(opts.enlargeOnly && opts.enlargeOnly.length))
+            ? ' Tap "Aa" next to a character to choose whose dialogue grows.' : '';
+          setStatus('Done — ' + what + ' enlarged on ' + scaled + ' of ' + res.report.pages.length + ' pages.'
+                    + highlightSummary(res.report) + note);
+        }
         dlBtn.style.display = 'block';
-        previews.className = 'previews on';
+        showPreviews();
         busy = false;
         if (queued) { queued = false; process(); }
       }).catch(function (e) {
@@ -591,7 +620,9 @@
     if (!outBlobUrl) return;
     var a = document.createElement('a');
     a.href = outBlobUrl;
-    a.download = originalName + ' (enlarged ' + (+slider.value).toFixed(2) + 'x).pdf';
+    a.download = originalName + (prefs.enlargeMode === 'reader'
+      ? ' (reader mode ' + (+slider.value).toFixed(2) + 'x).pdf'
+      : ' (enlarged ' + (+slider.value).toFixed(2) + 'x).pdf');
     document.body.appendChild(a);
     a.click();
     a.remove();

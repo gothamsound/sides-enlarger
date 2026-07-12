@@ -44,6 +44,17 @@ A **"Make bigger"** switch picks what grows:
   coverage, call sheets, revision tables) are passed through untouched in
   every mode.
 
+And set apart from those three, because it deliberately breaks the
+same-page-count rule:
+- **Reader mode**: reflows the script into large, clean reading text (like an
+  e-reader): bold scene headings, centered character names, full-width
+  dialogue and action with the line wraps removed, at the size you pick with
+  the slider. Headers, footers, page numbers, revision stars and watermarks
+  are dropped. Where each original script page begins, a gray "SCRIPT PAGE
+  34" rule is drawn inline, so when someone on set calls a page you can still
+  find it. Every reader page carries a footer reminding you the new page
+  numbers do not match the shooting script. Highlights work here too.
+
 ### Highlighting your lines
 After a PDF loads, a **"Highlight characters"** panel lists every speaking
 character it found, biggest part first, with line counts. Tap a color next to a

@@ -27,6 +27,7 @@ if (hlArg) {
 let mode = 'dialogue', enlargeOnly = null;
 for (const f of argv.filter(a => a.startsWith('--'))) {
   if (f === '--mode=page') mode = 'page';
+  else if (f === '--mode=reader') mode = 'reader';
   else if (f.startsWith('--enlarge-only=')) {
     enlargeOnly = f.slice('--enlarge-only='.length).split(';').map(s => s.trim()).filter(Boolean);
   }
