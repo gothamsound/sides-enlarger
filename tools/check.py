@@ -259,9 +259,10 @@ def reader_check(b, a, report, fails, notes):
                 for sp in ln["spans"]:
                     if sp["bbox"][3] < H - 45 and sp["text"].strip() and sp["size"] > 9:
                         sizes.append(sp["size"])
-    # subtract the known page-break markers before the invented check
+    # subtract the known page-break marker text before the invented check
+    # (labels are the full drawn strings, e.g. 'SCRIPT PAGE 17 · NCIS: ...')
     for label in (report or {}).get("readerBreaks", []):
-        got.subtract(collections.Counter(["SCRIPT", "PAGE"] + str(label).split()))
+        got.subtract(collections.Counter(str(label).split()))
     got = +got
     missing = need - got
     for t, n in list(missing.items())[:8]:

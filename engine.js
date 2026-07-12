@@ -812,10 +812,22 @@
     };
     for (const P of pages) {
       if (!P.lines.some(l => l.cls === 'dialogue')) continue;
+      const ML0 = 70, marginR0 = P.width - 80;
       // mark where this original script page starts, so on-set page calls
-      // can be found in reader view
-      const label = pageLabelOf(P);
-      els.push({ t: 'break', text: label });
+      // can be found in reader view; reference the FULL header name, e.g.
+      // 'SCRIPT PAGE 17 · NCIS: NY Ep. 101 "Pilot" Prod. Draft (Full Blue)'
+      const num = pageLabelOf(P);
+      let headerText = '';
+      const hdr = P.lines
+        .filter(l => l.furn && l.y > P.height * 0.85)
+        .sort((a2, b2) => b2.y - a2.y)[0];
+      if (hdr) {
+        headerText = textFromItems(hdr.items.filter(t => !t.rot && t.x + t.w > ML0 && t.x < marginR0));
+        for (const tail of [' ' + num + '.', ' ' + num]) {
+          if (headerText.endsWith(tail)) { headerText = headerText.slice(0, -tail.length).trim(); break; }
+        }
+      }
+      els.push({ t: 'break', text: 'SCRIPT PAGE ' + num + (headerText ? ' · ' + headerText : '') });
       const ML = 70, marginR = P.width - 80;
       const lineName = new Map();
       for (const B of (P.blocks || [])) {
@@ -1109,10 +1121,15 @@
         const hl = hlIdx != null ? rgbOf(hlIdx) : null;
         switch (el.t) {
           case 'break': {
-            // original-script page marker: a labeled gray rule
-            report.readerBreaks.push(text);
-            const label = 'SCRIPT PAGE ' + text;
+            // original-script page marker: a labeled gray rule with the full
+            // header name (trimmed at word boundaries to fit one line)
             const sz = Math.max(8, size * 0.6);
+            let label = text;
+            const maxW = colW - 36;
+            while (label.indexOf(' ') !== -1 && F.widthOfTextAtSize(label, sz) > maxW) {
+              label = label.slice(0, label.lastIndexOf(' ')).trim();
+            }
+            report.readerBreaks.push(label);
             ensure(lh * 2.2);
             y -= lh * 0.6;
             const tw = F.widthOfTextAtSize(label, sz);
@@ -1124,9 +1141,12 @@
             break;
           }
           case 'slug': {
+            // a new scene: thick rule above the heading
             const lines = wrap(text, FB, size * 1.02, colW);
-            ensure(lh * (lines.length + 1.6)); // keep heading with what follows
-            y -= lh * 0.7;
+            ensure(lh * (lines.length + 2)); // keep heading with what follows
+            y -= lh * 0.55;
+            page.drawLine({ start: { x: MX, y: y }, end: { x: W - MX, y: y }, thickness: 2.6, color: PDFLib.rgb(0.15, 0.15, 0.15) });
+            y -= lh * 0.45;
             drawLines(lines, FB, size * 1.02, {});
             y -= lh * 0.2;
             break;

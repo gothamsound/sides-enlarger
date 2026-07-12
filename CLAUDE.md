@@ -127,7 +127,10 @@ renderer re-segmenting enlarged lines). It also writes
   sequentially) from body segments, dropping furniture, margin marks,
   (MORE)/(CONTINUED) and rotated watermark items (`item.rot`), and skipping
   no-dialogue pages; then renders a fresh Times PDF at `12 * scale` pt with
-  pdf-lib (wrapping re-done at reader width). Highlights paint as pastel
+  pdf-lib (wrapping re-done at reader width). Each source page starts with a
+  gray rule labeled with the printed page number AND the page's full header
+  name (`SCRIPT PAGE 17 · NCIS: NY Ep. 101 ...`, word-trimmed to fit); each
+  new scene gets a thick rule above its slug. Highlights paint as pastel
   strips UNDER the text (we own the background). The verifier's contract for
   reader mode is different: no body word lost, nothing invented beyond the
   reported `readerBreaks` markers and footers, stars dropped, size correct.
@@ -189,4 +192,9 @@ renderer re-segmenting enlarged lines). It also writes
 Commit everything, push. In repo Settings → Pages, serve from the default branch
 root. `index.html` + `.nojekyll` are all Pages needs. Per-user prefs key off the
 URL hash (`/#laura`); nothing but a preferences label is stored, and only in the
-visitor's localStorage.
+visitor's localStorage. The ROOT URL (no hash) is stateless by design: always
+default options, nothing loaded or saved.
+
+**Versioning:** bump `version` in package.json for every user-visible release;
+the build stamps it into the page footer (`__VERSION__`) so the public page
+shows which version people are using.

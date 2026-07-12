@@ -18,6 +18,7 @@
   .sub { color:#666; margin:0; font-size:14px; }
   .who { display:inline-block; background:var(--accentSoft); color:var(--accent); border-radius:12px;
          padding:1px 10px; font-size:13px; margin-left:8px; vertical-align:middle; }
+  .who[hidden] { display:none; }
   #drop { border:2.5px dashed #b9b2a6; border-radius:14px; padding:44px 20px; text-align:center;
           background:#fff; cursor:pointer; transition:border-color .15s, background .15s; }
   #drop.hover { border-color:var(--accent); background:#f6f7e8; }
@@ -177,7 +178,7 @@
          target="_blank" rel="noopener noreferrer">Report an issue or request a feature</a></p>
   </section>
 
-  <footer>Everything runs in your browser — no uploads, no accounts, no tracking.</footer>
+  <footer>Sides Enlarger v__VERSION__ &middot; Everything runs in your browser — no uploads, no accounts, no tracking.</footer>
 </main>
 
 <script>/*__PDFJS__*/</script>
@@ -204,25 +205,28 @@
   var engine = createSidesEngine({ pdfjsLib: pdfjs, PDFLib: window.PDFLib });
   var PALETTE = engine.PALETTE;
 
-  // ---- who am I: #laura -> per-person preferences (nothing else is stored) ----
+  // ---- who am I: #laura -> per-person preferences (nothing else is stored).
+  // The root URL (no #name) is stateless: always default options, nothing
+  // remembered, so a shared link behaves the same for everyone.
   function personKey() {
     var h = (location.hash || '').replace(/^#/, '').trim();
-    if (h) return h;
-    var p = (location.pathname || '').split('/').filter(Boolean).pop() || '';
-    if (p && !/\.(html?|pdf)$/i.test(p)) return p;
-    return 'default';
+    return h || null;
   }
   var who = personKey();
   var PREFS = 'sides-enlarger:' + who;
-  if (who !== 'default') {
+  if (who) {
     var chip = document.getElementById('who');
     chip.textContent = who;
     chip.hidden = false;
   }
   function loadPrefs() {
+    if (!who) return {};
     try { return JSON.parse(localStorage.getItem(PREFS)) || {}; } catch (e) { return {}; }
   }
-  function savePrefs(p) { try { localStorage.setItem(PREFS, JSON.stringify(p)); } catch (e) {} }
+  function savePrefs(p) {
+    if (!who) return;
+    try { localStorage.setItem(PREFS, JSON.stringify(p)); } catch (e) {}
+  }
 
   // ---- elements ----
   var drop = document.getElementById('drop');
