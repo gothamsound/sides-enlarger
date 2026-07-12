@@ -202,3 +202,19 @@ the synthetic fixture means the test suite never needs a confidential script.
 Verified against a synthetic fixture **and** four real production sides
 (text-based, incl. permission-locked and form-XObject layouts): full 1.25×
 enlargement with page-for-page parity on every dialogue page.
+
+---
+
+## License and no warranty
+
+Sides Enlarger is free software released under the **MIT License** (see the
+[`LICENSE`](LICENSE) file for the full terms). You're free to use, copy, modify,
+and share it.
+
+It is provided **"as is," without warranty of any kind.** It's a convenience
+tool, not a guarantee of correctness: always compare the enlarged PDF against
+your original before you rely on it on set, and keep your original sides. To the
+fullest extent allowed by law, the authors and Gotham Sound accept no liability
+for any loss, error, or damage arising from its use. (Nothing here changes how
+the tool works: your script is still processed entirely in your browser and is
+never uploaded.)
