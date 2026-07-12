@@ -16,6 +16,9 @@
   h1 { font-size: 26px; margin: 0 0 2px; }
   h1 .mono { font-family: "Courier New", monospace; }
   .sub { color:#666; margin:0; font-size:14px; }
+  .saveHint { margin-top:6px; font-size:13px; color:#8a8a8a; }
+  .saveHint code { background:var(--accentSoft); border-radius:6px; padding:1px 6px;
+                   font-size:12px; overflow-wrap:anywhere; }
   .who { display:inline-block; background:var(--accentSoft); color:var(--accent); border-radius:12px;
          padding:1px 10px; font-size:13px; margin-left:8px; vertical-align:middle; }
   .who[hidden] { display:none; }
@@ -110,6 +113,9 @@
       <p class="sub">Drop today's sides. Dialogue comes back bigger, and you can highlight each
          character's lines in their own color. Same pages, same everything else.
          Your script never leaves this device.</p>
+      <p class="sub saveHint">Want your size, mode and colors saved for next time? Add
+         <strong>#</strong> and a unique name to the address and use that link from then on,
+         like <code>https://gothamsound.github.io/sides-enlarger/#peter123456</code>.</p>
     </div>
   </header>
 
@@ -170,7 +176,7 @@
   </div>
 
   <section id="donate">
-    <p>If this is working for you, please consider donating.</p>
+    <p>If this is working for you (or even if it isn't working for you), please consider donating.</p>
     <a href="https://give.entertainmentcommunity.org/site/Donation2?df_id=12678&amp;12678.donation=form1&amp;mfc_pref=T"
        target="_blank" rel="noopener noreferrer">Donate to the Entertainment Community Fund</a>
     <p class="issueLine">Something broken, or wishing for a feature?
