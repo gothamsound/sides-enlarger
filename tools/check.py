@@ -15,9 +15,9 @@ Asserts:
      block sits inside the rect, and no rect covers any other line's text
   6. selective mode (report.enlargeOnly): only the listed characters' dialogue
      scales; everyone else's dialogue is checked as unchanged like non-dialogue
-  7. page mode (report.mode == "page"): every line lands at the reported
-     affine (s*x+tx, s*y+ty) at s times its size; nothing else is asserted
-     about classes since the whole page moves together
+  7. page mode (report.mode == "page"): body text is s times bigger on its
+     own UNMOVED baseline, x mapped about the page anchor; margin marks
+     (scene numbers, revision stars, page numbers) are byte-identical
   8. renders side-by-side page images to out/compare_pNN.png for eyeballing
 
 The dialogue classifier here is an independent Python re-implementation of
@@ -210,15 +210,18 @@ def main():
             return line_name.get(id(L)) in sel
 
         if mode == "page":
-            tx = pinfo.get("tx", 0.0) or 0.0
-            ty = pinfo.get("ty", 0.0) or 0.0
-            tyf = pageH * (1.0 - s_eff) - ty  # PDF-space ty -> pymupdf top-down
+            # whole-page mode: baselines never move; body x maps about the
+            # page's content-center anchor
+            anchor = pinfo.get("anchor", pageW / 2.0)
 
             def ymap(L):
-                return s_eff * L["y"] + tyf
+                return L["y"]
 
             def xspan(L):
-                return (s_eff * L["x0"] + tx, s_eff * L["x1"] + tx)
+                if s_eff > 1.001:
+                    return (anchor + s_eff * (max(L["x0"], 70) - anchor),
+                            anchor + s_eff * (min(L["x1"], marginStart) - anchor))
+                return (L["x0"], L["x1"])
         else:
             def ymap(L):
                 return L["y"]
@@ -269,11 +272,15 @@ def main():
         # --- (c2) kerning fidelity: word gaps must scale uniformly. On
         # word-per-op / glyph-per-op PDFs a per-run anchor would leave gaps
         # at original size while glyphs grow — this catches that regression.
-        if mode != "page" and applied is not None and applied > 1.001:
+        # Applies in page mode too (dialogue lines, uniform about the anchor).
+        if applied is not None and applied > 1.001:
             bwords = b[pi].get_text("words")
             awords = a[pi].get_text("words")
             for L in blines:
-                if not line_enlarged(L):
+                if mode == "page":
+                    if L.get("cls") != "dialogue":
+                        continue
+                elif not line_enlarged(L):
                     continue
                 bw = sorted(w for w in bwords if abs(w[3] - L["y"]) <= 5.0 and w[0] < marginStart)
                 aw = sorted(w for w in awords if abs(w[3] - L["y"]) <= 5.0 and w[0] < marginStart)
@@ -291,32 +298,54 @@ def main():
                                        f"{bgap:.2f} -> {agap:.2f} (expected {applied*bgap:.2f})")
 
         if mode == "page":
-            # --- (e) whole-page zoom: every SPAN maps to (s*x+tx, s*y+ty) at
-            # s times its size. Span-level, because line clustering tolerates
-            # a ~2pt intra-line y spread that the zoom then amplifies; the
-            # affine itself is exact per span. Candidates may be merged or
-            # split relative to the original span, so coverage is one-sided.
+            # --- (e) whole-page "all bigger": body text grows s about the
+            # page anchor on its own UNMOVED baseline; margin marks (left
+            # scene numbers, revision stars, page numbers) stay put exactly.
+            # Word-level positions (words never merge across the mark
+            # boundary and carry no space-bbox noise); span-level sizes.
+            bwords_e = b[pi].get_text("words")
+            awords_e = a[pi].get_text("words")
+            for w in bwords_e:
+                if not w[4].strip():
+                    continue
+                is_mark = w[0] >= marginStart or w[2] <= 70
+                ex0 = w[0] if (is_mark or s_eff <= 1.001) else anchor + s_eff * (w[0] - anchor)
+                tol = 0.7 if is_mark else 1.5
+                m = [t for t in awords_e if t[4] == w[4]
+                     and abs(t[3] - w[3]) <= 1.5 and abs(t[0] - ex0) <= tol]
+                if not m:
+                    kind = "margin mark" if is_mark else "body word"
+                    fails.append(f"p{pi+1}: {kind} not at expected x={ex0:.1f} "
+                                 f"(y={w[3]:.1f}): {w[4][:20]!r}")
             for L in blines:
                 for sp in L["spans"]:
-                    ey = s_eff * sp["y"] + tyf
-                    ex0 = s_eff * sp["x0"] + tx
-                    ex1 = s_eff * sp["x1"] + tx
-                    cands = [t for t in aspans
-                             if abs(t["y"] - ey) <= 1.0
-                             and t["x0"] < ex1 - 0.5 and t["x1"] > ex0 + 0.5]
-                    if not cands:
-                        fails.append(f"p{pi+1}: span not at mapped position y={ey:.1f}: {sp['text'][:25]!r}")
+                    if sp["x1"] <= 70 or sp["x0"] >= marginStart:
+                        continue  # pure margin mark: position covered above
+                    # body portion of this span, mapped
+                    bx0 = max(sp["x0"], 70)
+                    bx1 = min(sp["x1"], marginStart)
+                    if bx1 - bx0 < 4:
                         continue
-                    ax0 = min(t["x0"] for t in cands)
-                    ax1 = max(t["x1"] for t in cands)
-                    if ax0 - ex0 > 1.5 or ex1 - ax1 > 2.5:
-                        fails.append(f"p{pi+1}: span extent off after zoom y={ey:.1f}: "
-                                     f"[{ax0:.1f},{ax1:.1f}] vs [{ex0:.1f},{ex1:.1f}] {sp['text'][:20]!r}")
-                    r = statistics.median([t["size"] for t in cands]) / sp["size"]
+                    exp_size = sp["size"] if s_eff <= 1.001 else s_eff * sp["size"]
+                    win0 = bx0 if s_eff <= 1.001 else anchor + s_eff * (bx0 - anchor)
+                    win1 = bx1 if s_eff <= 1.001 else anchor + s_eff * (bx1 - anchor)
+                    # judge by the candidate covering most of the window: a
+                    # margin-mark span (leading-space bbox) can sit inside the
+                    # mapped body window without owning it
+                    best, best_ov = None, 2.0
+                    for t in aspans:
+                        if abs(t["y"] - sp["y"]) > 1.0:
+                            continue
+                        ov = min(t["x1"], win1) - max(t["x0"], win0)
+                        if ov > best_ov:
+                            best, best_ov = t, ov
+                    if best is None:
+                        continue  # presence is asserted by the word check
+                    r = best["size"] / sp["size"]
                     ratios.append(r)
-                    if abs(r - s_eff) > 0.04:
-                        fails.append(f"p{pi+1}: page-zoom size ratio {r:.3f} != {s_eff} "
-                                     f"at y={ey:.1f}: {sp['text'][:20]!r}")
+                    if abs(best["size"] - exp_size) > 0.05 * exp_size:
+                        fails.append(f"p{pi+1}: body size {r:.3f}x != {s_eff}x at y={sp['y']:.1f}: "
+                                     f"{sp['text'][:20]!r}")
         else:
             # --- (c) enlarged dialogue: line-level scale + unmoved baseline.
             for L in blines:
@@ -354,7 +383,7 @@ def main():
                     if all(abs(f[j] - rgb[j]) < 0.02 for j in range(3)):
                         rects_by_name.setdefault(name, []).append(d["rect"])
             awords = a[pi].get_text("words")
-            wcut = (s_eff * marginStart + (pinfo.get("tx", 0.0) or 0.0)) if mode == "page" else marginStart
+            wcut = marginStart
             for name, info in hl.items():
                 myblocks = [B for B in blocks if B["name"] == name
                             and any(l.get("cls") == "dialogue" for l in B["lines"])]

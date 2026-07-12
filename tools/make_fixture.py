@@ -100,6 +100,10 @@ PAGES = [
         ("blank",),
         ("action", "Diaz kills the intercom."),
         ("blank",),
+        # text inside a narrow clip rect (like a call-sheet table cell):
+        # whole-page mode must not let it grow out of its clip
+        ("clipcell", "EVIDENCE LOG 9-A"),
+        ("blank",),
         ("cue", "DIAZ"),
         ("dial", "How long has she been on this?"),
         ("blank",),
@@ -196,6 +200,15 @@ def main():
                 for word in tok[1].split(" "):
                     c.drawString(x, y, word)
                     x += (len(word) + 1) * 7.2  # Courier 12: 7.2pt/char
+                y -= LEAD
+                continue
+            if kind == "clipcell":
+                c.saveState()
+                p = c.beginPath()
+                p.rect(X_ACTION + drift - 2, y - 3, 132, 15)
+                c.clipPath(p, stroke=0, fill=0)
+                c.drawString(X_ACTION + drift, y, tok[1])
+                c.restoreState()
                 y -= LEAD
                 continue
             if kind == "stardial":

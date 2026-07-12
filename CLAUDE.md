@@ -15,13 +15,10 @@ there is no backend.
 
 ## Non-negotiable constraints (do not regress these)
 1. **Page-for-page parity.** Content must never reflow across pages. On set,
-   "page 34" must stay page 34. In dialogue mode, enlargement rescales dialogue
-   text runs in place around each line's own baseline — nothing moves
-   vertically. In whole-page mode the ENTIRE page content is wrapped in one
-   uniform scale-and-recenter transform (nothing inside is rewritten), so
-   parity is structural there too. If enlargement wouldn't fit a page, **back
-   off the scale for that page and report it**; never push content onto
-   another page.
+   "page 34" must stay page 34. All modes rescale text runs in place around
+   each line's own baseline — nothing ever moves vertically, so nothing can
+   reflow. If enlargement wouldn't fit a page, **back off the scale for that
+   page and report it**; never push content onto another page.
 2. **Confidentiality / offline.** Scripts must never leave the device. No network
    calls, no CDNs, no telemetry, no cloud. Everything (pdf.js, its worker, pdf-lib,
    the engine) is inlined into `index.html`. Keep it that way.
@@ -99,12 +96,18 @@ renderer re-segmenting enlarged lines). It also writes
   not weaken it to catch more names.
 - **Modes**: `opts.enlargeOnly` (array of names) gates the in-place scaling per
   cue-led block: unselected characters' dialogue must stay byte-identical, and
-  the verifier checks it like non-dialogue. `opts.mode: 'page'` skips the
-  rewriter entirely and wraps the page content streams in `q s 0 0 s tx ty cm
-  ... Q` (fit from the text bounding box, horizontally centered, top-anchored,
-  10pt safety edge; watermark extents measured conservatively so nothing ever
-  leaves the sheet). Whole-page zoom is honest but modest on real sides: the
-  vertical box (headers to CONTINUED) is the binding constraint.
+  the verifier checks it like non-dialogue. `opts.mode: 'page'` ("Everything")
+  feeds the SAME rewriter proxy lines for every body text line, anchored at
+  the page's content-center x, so all text grows on its own unmoved baseline
+  and spreads toward the edges. Margin furniture (segments left of x=70 or
+  right of pageW-80: scene numbers, revision stars, page numbers) never
+  scales. Per-page cap = min(page-edge/margin-mark width fit, line-spacing
+  fit `gap / (0.16*size_above + 0.64*size_below)` so ascenders and descenders
+  don't collide, and a CLIP fit: a measure pass walks the content tracking
+  rectangular clip paths (`re W n` — table cells, row bands) and caps the
+  scale so no text grows out of its clip and gets cut off invisibly).
+  Typically lands 1.1-1.25x on real sides; table/call-sheet pages cap at 1.0
+  with a warning.
 - **Highlighting**: one rounded rect per block of an assigned character,
   painted as a Multiply-blend fill in a content stream APPENDED after the page
   content (so white background fills inside forms can't hide it; glyphs stay
@@ -131,7 +134,14 @@ renderer re-segmenting enlarged lines). It also writes
   "R U M A" and every text heuristic breaks.
 - **Scene numbers print in BOTH margins** of a slugline and look like a dual-cue
   row; spaceless letter+digit runs are filtered from dual-name candidates only
-  (never from real cue-derived names).
+  (never from real cue-derived names). In whole-page mode the margin/body split
+  is done at ITEM level by x-thresholds (left of 70 / right of pageW-80), never
+  by gap-joined segments — the left scene number sits closer than a segment gap
+  to the slug text.
+- **Clip rects hide moved text.** Table cells and per-row bands clip their
+  text (`re W n`); anything scaled beyond the clip is silently invisible, so
+  whole-page mode measures clips first and backs off. pymupdf respects clips
+  in extraction; pdf.js does not.
 - **Text inside forms**: page content stream often has zero `Tj` — don't conclude
   "no dialogue," descend into `Do`.
 - **`'` and `"` show-operators** are decomposed so a scaled `Tm` can be injected.

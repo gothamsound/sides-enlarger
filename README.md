@@ -33,11 +33,14 @@ A **"Make bigger"** switch picks what grows:
 - **Selected characters**: tap "Aa" next to a name and only that dialogue
   grows; everyone else's lines stay exactly as printed. Combine freely with
   highlight colors.
-- **Whole page**: the entire page (action, cues, headers, everything) is
-  zoomed uniformly out toward the paper edges, up to the slider size. How much
-  it can grow depends on the layout; production pages already run close to the
-  top and bottom margins, so the gain is honest but often modest, and pages
-  that hit the margins sooner say so.
+- **Everything**: action, cues, dialogue, headers, all of it grows on its own
+  line, spreading out toward the paper edges, up to the slider size. Stage
+  direction runs nearly edge to edge and the dialogue column widens by the
+  same factor. Scene numbers, revision stars and page numbers stay exactly
+  where they were. Line positions never change, so pages stay identical; the
+  practical ceiling (usually 1.1x to 1.25x) is where neighboring lines would
+  start to touch or where text would escape a table cell, and pages that hit
+  a limit say which one.
 
 ### Highlighting your lines
 After a PDF loads, a **"Highlight characters"** panel lists every speaking

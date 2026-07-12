@@ -120,7 +120,7 @@
     <div class="seg" id="modeSeg" role="group" aria-labelledby="modeLabel">
       <button type="button" data-mode="all" class="on">All dialogue</button>
       <button type="button" data-mode="selected">Selected characters</button>
-      <button type="button" data-mode="page">Whole page</button>
+      <button type="button" data-mode="page">Everything</button>
     </div>
   </div>
 
@@ -519,7 +519,7 @@
       }).then(function (res) {
         if (!res) return;
         var scaled = res.report.pages.filter(function (p) { return p.appliedScale > 1.001; }).length;
-        var what = res.report.mode === 'page' ? 'whole page' : 'dialogue';
+        var what = res.report.mode === 'page' ? 'everything' : 'dialogue';
         var note = (prefs.enlargeMode === 'selected' && !(opts.enlargeOnly && opts.enlargeOnly.length))
           ? ' Tap "Aa" next to a character to choose whose dialogue grows.' : '';
         setStatus('Done — ' + what + ' enlarged on ' + scaled + ' of ' + res.report.pages.length + ' pages.'
