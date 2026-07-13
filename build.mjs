@@ -11,13 +11,17 @@ const read = f => fs.readFileSync(path.join(root, f), 'utf8');
 // literals "<\/script" is byte-identical after parsing, so this is safe.
 const safe = s => s.replace(/<\/script/gi, '<\\/script');
 
-const workerB64 = fs.readFileSync(path.join(root, 'node_modules/pdfjs-dist/legacy/build/pdf.worker.min.js')).toString('base64');
+// pdf.js v4+ is ESM-only (.mjs, no UMD build): both the main library and the
+// worker are embedded as base64 and reconstituted at runtime as blob: URLs
+// (the module is `await import()`ed; the CSP's `script-src blob:` allows it).
+const pdfjsB64 = fs.readFileSync(path.join(root, 'node_modules/pdfjs-dist/legacy/build/pdf.min.mjs')).toString('base64');
+const workerB64 = fs.readFileSync(path.join(root, 'node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs')).toString('base64');
 const logoB64 = fs.readFileSync(path.join(root, 'assets/gothamsound_green-and-black.png')).toString('base64');
 const version = JSON.parse(read('package.json')).version;
 
 const template = read('ui_template.html');
 const out = template
-  .replace('/*__PDFJS__*/', () => safe(read('node_modules/pdfjs-dist/legacy/build/pdf.min.js')))
+  .replace('/*__PDFJS_B64__*/', () => pdfjsB64)
   .replace('/*__PDFWORKER_B64__*/', () => workerB64)
   .replace('/*__PDFLIB__*/', () => safe(read('node_modules/pdf-lib/dist/pdf-lib.min.js')))
   .replace('/*__ENGINE__*/', () => safe(read('engine.js')))

@@ -199,27 +199,18 @@
     &middot; free software, provided as is with no warranty &middot; &copy; 2026 Gotham Sound and Communications, Inc.</footer>
 </main>
 
-<script>/*__PDFJS__*/</script>
+<script>window.__PDFJS_B64__ = "/*__PDFJS_B64__*/";</script>
 <script>window.__PDFWORKER_B64__ = "/*__PDFWORKER_B64__*/";</script>
 <script>/*__PDFLIB__*/</script>
 <script>/*__ENGINE__*/</script>
 <script>
-(function () {
+// pdf.js v5 is ESM-only. The classic script below defines the whole app as
+// window.__bootSides__; the module script at the end of the page (modules
+// always run after classic scripts) reconstitutes pdf.js from embedded
+// base64, imports it from a local blob: URL — fully offline, allowed by the
+// CSP's `script-src blob:` — and then boots the app.
+window.__bootSides__ = function (pdfjs) {
   'use strict';
-  var pdfjs = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
-  // Reconstitute the pdf.js worker from embedded base64 into a Blob URL and run
-  // it as a real Web Worker — fully offline, no network, deterministic.
-  try {
-    var wbin = atob(window.__PDFWORKER_B64__);
-    var wbytes = new Uint8Array(wbin.length);
-    for (var wi = 0; wi < wbin.length; wi++) wbytes[wi] = wbin.charCodeAt(wi);
-    var wurl = URL.createObjectURL(new Blob([wbytes], { type: 'text/javascript' }));
-    pdfjs.GlobalWorkerOptions.workerSrc = wurl;
-  } catch (e) {
-    // last-resort: fake worker via the global message handler if present
-    pdfjs.GlobalWorkerOptions.workerSrc = '';
-  }
-
   var engine = createSidesEngine({ pdfjsLib: pdfjs, PDFLib: window.PDFLib });
   var PALETTE = engine.PALETTE;
 
@@ -677,7 +668,25 @@
     a.click();
     a.remove();
   });
-})();
+};
+</script>
+<script type="module">
+const b64ToBlobUrl = (b64) => {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return URL.createObjectURL(new Blob([bytes], { type: 'text/javascript' }));
+};
+try {
+  const pdfjs = await import(b64ToBlobUrl(window.__PDFJS_B64__));
+  // the worker is a module worker in v5; pdf.js loads it itself from this URL
+  pdfjs.GlobalWorkerOptions.workerSrc = b64ToBlobUrl(window.__PDFWORKER_B64__);
+  window.__bootSides__(pdfjs);
+} catch (e) {
+  document.getElementById('status').textContent =
+    'Could not start the PDF engine. (' + ((e && e.message) || e) + ')';
+  document.getElementById('status').className = 'err';
+}
 </script>
 </body>
 </html>
