@@ -920,6 +920,14 @@
       for (const L of P.lines) {
         if (L.furn) continue;
         let live = L.items.filter(t => !t.rot && !/^\*+$/.test(t.str.trim()));
+        // pdf.js v5 merges a trailing right-margin revision star into the
+        // dialogue text item (v3 emitted it separately, dropped by the filter
+        // above). The margin gap becomes a space, so a trailing " *" is a
+        // revision mark, not content (dialogue never ends that way); strip it
+        // so it can't bleed into the reflowed text.
+        live = live.map(t => /\s\*+\s*$/.test(t.str)
+          ? Object.assign({}, t, { str: t.str.replace(/\s+\*+\s*$/, '') })
+          : t).filter(t => t.str.trim());
         // Scene number prints identically in BOTH margins of a scene/shot
         // heading. The left copy is always separated from the body column by
         // a wide gap (far bigger than a word space, so this is drift-proof);

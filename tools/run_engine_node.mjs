@@ -4,13 +4,30 @@
 import { createRequire } from 'module';
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const require = createRequire(import.meta.url);
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const PDFLib = require(path.join(root, 'node_modules/pdf-lib/dist/pdf-lib.js'));
-const pdfjsLib = require(path.join(root, 'node_modules/pdfjs-dist/legacy/build/pdf.js'));
+// pdf.js v5 evaluates `new DOMMatrix()` at import time; Node has none, and the
+// official polyfill (@napi-rs/canvas) is only needed for RENDERING. This
+// runner only extracts text (page images are pymupdf's job in check.py), so a
+// minimal identity-matrix stand-in satisfies module evaluation. If anything
+// in the text path ever really used it, the independent verifier would fail.
+if (typeof globalThis.DOMMatrix === 'undefined') {
+  globalThis.DOMMatrix = class DOMMatrix {
+    constructor(init) {
+      this.a = 1; this.b = 0; this.c = 0; this.d = 1; this.e = 0; this.f = 0;
+      if (Array.isArray(init) && init.length === 6) {
+        [this.a, this.b, this.c, this.d, this.e, this.f] = init;
+      }
+    }
+  };
+}
+// pdf.js v4+ ships ESM only; the module namespace is API-compatible with the
+// old UMD global (getDocument, GlobalWorkerOptions, ...)
+const pdfjsLib = await import(pathToFileURL(path.join(root, 'node_modules/pdfjs-dist/legacy/build/pdf.mjs')).href);
 const createSidesEngine = require(path.join(root, 'engine.js'));
 
 const argv = process.argv.slice(2);
