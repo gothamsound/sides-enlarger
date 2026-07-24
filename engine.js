@@ -159,6 +159,16 @@
       return e;
     };
     for (const P of pages) {
+      // A page with no classified dialogue is not script: title pages,
+      // coverage, revision tables and CALL SHEETS. A call sheet's column
+      // table ("SCENE | SET/ DESCRIPTION | CAST | D/N", crew rows like
+      // "HMU/ WARDROBE" and "RPT RPT TO") reads as a grid of dual-cue rows,
+      // and dualNames below bypasses the dialogue-follow noise filter, so
+      // those column labels would land in the character list as zero-line
+      // names. Such pages already pass through byte-identical and are skipped
+      // by reader mode; they must contribute no characters either. Same
+      // predicate reader mode uses, so the three stay consistent.
+      if (!P.lines.some(l => l.cls === 'dialogue')) continue;
       for (const B of (P.blocks || [])) {
         const dial = B.lines.filter(l => l.cls === 'dialogue').length;
         if (!dial || !isPlausibleName(B.name)) continue;
@@ -1692,7 +1702,12 @@
         const page = pdfPages[i];
         const pageReport = { page: i + 1, appliedScale: requested, dialogueLines: P.lines.filter(l => l.cls === 'dialogue').length, warnings: [] };
         report.pages.push(pageReport);
-        if (P.hasDual) pageReport.warnings.push('dual-dialogue block detected — left at original size');
+        // Say what the page actually is. A call sheet's column grid also trips
+        // the dual-cue heuristic, so without this it reports itself as a
+        // dual-dialogue block instead of a non-script page.
+        if (!pageReport.dialogueLines) {
+          if (requested > 1.001) pageReport.warnings.push('no dialogue on this page: left at original size (title, coverage and call-sheet pages are not enlarged)');
+        } else if (P.hasDual) pageReport.warnings.push('dual-dialogue block detected — left at original size');
         pageReport.enlargedLines = P.lines.filter(l => l.cls === 'dialogue' && l.enlarge !== false).length;
         if (!pageReport.enlargedLines) pageReport.appliedScale = 1;
 

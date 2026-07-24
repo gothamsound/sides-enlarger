@@ -202,6 +202,23 @@ PAGES = [
         ("blank",),
         ("sharedform",),
     ],
+    # page 9 — CALL SHEET. No dialogue anywhere, but a two-column grid of
+    # all-caps labels that reads as a stack of dual-dialogue cue rows. Dual
+    # names bypass the dialogue-follow noise filter, so without the
+    # no-dialogue page guard every one of these column headings lands in the
+    # character list as a zero-line "character".
+    [
+        ("head", "CALL SHEET - DAY 6 OF 8"),
+        ("blank",),
+        ("dual_cues", "SCENE", "SET/ DESCRIPTION"),
+        ("dual_cues", "CAST", "D/N"),
+        ("dual_cues", "PAGES LOCATION", "ELEMENTS"),
+        ("dual_cues", "CAMERA", "SOUND"),
+        ("dual_cues", "HMU/ WARDROBE", "SPFX MAKEUP"),
+        ("dual_cues", "RPT RPT TO", "# STAND INS"),
+        ("blank",),
+        ("action", "NO CREW PARKING ON SET--"),
+    ],
 ]
 
 # ---------------------------------------------------------------- fixture 2

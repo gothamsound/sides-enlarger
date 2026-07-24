@@ -63,6 +63,11 @@ expected = sorted(["LAURA", "MORROW", "WITNESS", "DIAZ",
 if names != expected:
     print("      extracted:", names)
     print("      expected :", expected)
+    # call-sheet column headings arriving as zero-line "characters" is the
+    # signature of the no-dialogue page guard regressing
+    strays = [c["name"] for c in rep.get("characters", []) if not c.get("lines")]
+    if strays:
+        print("      zero-line strays (call-sheet leakage):", strays)
     sys.exit(1)
 PY
 
