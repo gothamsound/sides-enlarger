@@ -170,8 +170,16 @@ def classify_doc(doc):
 
 
 def mark_furniture(pages_lines, heights):
-    """mirror of the engine's markFurniture (page mode): top/bottom-zone rows
-    whose digit-stripped text repeats on at least half the pages"""
+    """mirror of the engine's markFurniture (engine.js). Top/bottom-zone rows
+    that repeat across pages, recognized two ways:
+      (A) identical text — the whole digit-stripped row repeats on >= half the
+          pages (single-show headers, CONTINUED: rows), matched in the wider
+          15%/12% zones.
+      (B) shared show-name anchor — multi-episode "day" sides vary everything
+          but the leading show-name token, matched on that token in the
+          extreme 8% edge band only. A row with no 3+-letter word (a lone page
+          number or "*") is furniture only in that edge band, so a mid-scene
+          left-margin scene number in the top zone stays body text."""
     from collections import defaultdict
 
     def zone(L, H):  # pymupdf y is top-down
@@ -181,24 +189,51 @@ def mark_furniture(pages_lines, heights):
             return "bot"
         return None
 
-    def key(L):
-        return " ".join(t for t in L["text"].split()
-                        if len(re.sub(r"[^A-Za-z]", "", t)) >= 3).upper()
+    def edge(L, H):
+        if L["y"] < 0.08 * H:
+            return "top"
+        if L["y"] > 0.92 * H:
+            return "bot"
+        return None
 
-    seen = defaultdict(set)
+    def sig(t):
+        return re.sub(r"[^A-Za-z]", "", t)
+
+    def key_full(L):
+        return " ".join(t for t in L["text"].split() if len(sig(t)) >= 3).upper()
+
+    def key_lead(L):
+        for t in L["text"].split():
+            if len(sig(t)) >= 3:
+                return sig(t).upper()
+        return ""
+
+    seen_full, seen_lead = defaultdict(set), defaultdict(set)
     for pi, lines in enumerate(pages_lines):
         for L in lines:
-            z = zone(L, heights[pi])
-            if not z or L.get("cls") in ("cue", "dialogue"):
+            if L.get("cls") in ("cue", "dialogue"):
                 continue
-            seen[(z, key(L))].add(pi)
+            zf = zone(L, heights[pi])
+            if zf:
+                kf = key_full(L)
+                if kf:
+                    seen_full[(zf, kf)].add(pi)
+            ze = edge(L, heights[pi])
+            if ze:
+                kl = key_lead(L)
+                if kl:
+                    seen_lead[(ze, kl)].add(pi)
     need = max(2, -(-len(pages_lines) // 2))
     for pi, lines in enumerate(pages_lines):
         for L in lines:
-            z = zone(L, heights[pi])
-            if not z or L.get("cls") in ("cue", "dialogue"):
+            if L.get("cls") in ("cue", "dialogue"):
                 continue
-            if not key(L) or len(seen[(z, key(L))]) >= need:
+            zf = zone(L, heights[pi])
+            if zf and key_full(L) and len(seen_full[(zf, key_full(L))]) >= need:
+                L["furn"] = True
+                continue
+            ze = edge(L, heights[pi])
+            if ze and (not key_lead(L) or len(seen_lead[(ze, key_lead(L))]) >= need):
                 L["furn"] = True
 
 

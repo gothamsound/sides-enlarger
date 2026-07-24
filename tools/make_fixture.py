@@ -204,6 +204,79 @@ PAGES = [
     ],
 ]
 
+# ---------------------------------------------------------------- fixture 2
+# A multi-episode "day" side. Real day-sides stitch scenes from several
+# episodes, so the running header's episode number, title, draft color and
+# page number all change page to page and ONLY the leading show name is
+# constant -- identical-text furniture matching cannot see it, and the engine
+# must fall back to the show-name anchor. The show name is drawn glyph-per-op
+# from x=40 so it straddles the body's x=70 boundary, exactly like real
+# distributed sides (a left-clipping bug eats "PROC" and leaves "EDURAL").
+OUT_MULTI = os.path.join(os.path.dirname(__file__), "..", "out", "fixture_multi.pdf")
+MULTI_SHOW = "PROCEDURAL"
+# (episode, title, draft, date, printed page number)
+MULTI_HEAD = [
+    ("209", "'Cold Open'",       "Blue Draft",     "4/28/26", 50),
+    ("202", "'Fallen'",          "Goldenrod Rev.", "5/15/26", 45),
+    ("202", "'Fallen'",          "Pink Draft",     "3/27/26", 46),
+    ("205", "'Out Of The Past'", "Goldenrod Rev.", "6/8/26",  52),
+    ("209", "'Cold Open'",       "Blue Draft",     "4/28/26", 33),
+    ("204", "'Young Blood'",     "Blue Draft",     "4/14/26", 47),
+]
+MULTI_BODY = [
+    [("slug", "INT. SQUAD ROOM - DAY"), ("blank",),
+     ("cue", "HALSTEAD"), ("dial", "Run the plate one more time."), ("blank",),
+     ("cue", "VOIGHT"), ("dial", "Already did. Comes back stolen.")],
+    [("slug", "EXT. RIVER WALK - NIGHT"), ("blank",),
+     ("cue", "VOIGHT"), ("dial", "He dumped it here. Has to be."), ("blank",),
+     ("cue", "HALSTEAD"), ("dial", "Divers are twenty minutes out.")],
+    [("slug", "INT. INTERVIEW ROOM - CONTINUOUS"), ("blank",),
+     ("cue", "BURGESS"), ("paren", "(sliding the file over)"),
+     ("dial", "Read it before you say another word.")],
+    # page 4 carries the mid-scene continuation number in the left margin
+    [("slug", "INT. MORGUE - DAY"), ("blank",),
+     ("cue", "BURGESS"), ("dial", "Tell me that is not our guy."), ("blank",),
+     ("cue", "HALSTEAD"), ("dial", "It is our guy.")],
+    [("slug", "INT. SQUAD ROOM - LATER"), ("blank",),
+     ("cue", "ATWATER"), ("dial", "Warrant came through."), ("blank",),
+     ("cue", "VOIGHT"), ("dial", "Then we move now.")],
+    [("slug", "EXT. LOADING DOCK - DAWN"), ("blank",),
+     ("cue", "ATWATER"), ("dial", "Nobody goes in without a vest."), ("blank",),
+     ("cue", "BURGESS"), ("dial", "Copy that.")],
+]
+
+
+def make_multi(path):
+    c = canvas.Canvas(path, pagesize=letter)
+    for pi, (ep, title, draft, date, pnum) in enumerate(MULTI_HEAD):
+        c.setFont(FONT, SIZE)
+        y = H - 54
+        x = 40
+        for ch in MULTI_SHOW:  # glyph-per-op, straddling the x=70 body edge
+            c.drawString(x, y, ch)
+            x += 7.2
+        c.drawString(150, y, "%s  %s   %s  %s" % (ep, title, draft, date))
+        c.drawString(500, y, "%d." % pnum)
+        y -= LEAD * 3
+        if pi == 3:
+            # a mid-scene scene-number continuation mark in the LEFT margin.
+            # It has no 3+-letter word (so it keys empty, like a page number)
+            # but it sits BELOW the header edge band, so it is body text and
+            # must survive reader mode instead of being eaten as furniture.
+            c.drawString(53, H - 102, "5.46pt1")
+        for tok in MULTI_BODY[pi]:
+            if tok[0] == "blank":
+                y -= LEAD
+                continue
+            xx = {"slug": X_ACTION, "action": X_ACTION, "cue": X_CUE,
+                  "dial": X_DIAL, "paren": X_PAREN}[tok[0]]
+            c.drawString(xx, y, tok[1])
+            y -= LEAD
+        c.showPage()
+    c.save()
+    print("wrote", os.path.abspath(path), "pages:", len(MULTI_HEAD))
+
+
 def main():
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     c = canvas.Canvas(OUT, pagesize=letter)
@@ -279,6 +352,7 @@ def main():
         c.showPage()
     c.save()
     print("wrote", os.path.abspath(OUT), "pages:", len(PAGES))
+    make_multi(OUT_MULTI)
 
 if __name__ == "__main__":
     main()

@@ -98,6 +98,39 @@ node tools/run_engine_node.mjs out/fixture.pdf out/fixture.reader.pdf 1.25 'LAUR
   >/dev/null 2>out/fixture.reader.err || { echo "    [reader mode] ENGINE ERROR:"; cat out/fixture.reader.err; fail=1; }
 check_one out/fixture.pdf out/fixture.reader.pdf "reader mode @ 1.25" "$RENDER_DIR/fixture_reader"
 
+# multi-episode day-side: the running header varies per page (only the show
+# name is constant) and its glyph-per-op name straddles the x=70 body edge.
+# Locks the show-name furniture anchor and the reader header label.
+echo "==> fixture (multi-episode): dialogue / whole-page / reader"
+run_one out/fixture_multi.pdf fixture_multi
+for m in page reader; do
+  node tools/run_engine_node.mjs out/fixture_multi.pdf "out/fixture_multi.$m.pdf" 1.25 'VOIGHT=0' --mode=$m \
+    >/dev/null 2>"out/fixture_multi.$m.err" || { echo "    [multi $m] ENGINE ERROR:"; cat "out/fixture_multi.$m.err"; fail=1; continue; }
+  check_one out/fixture_multi.pdf "out/fixture_multi.$m.pdf" "multi $m @ 1.25" "$RENDER_DIR/fixture_multi_$m"
+done
+echo "==> fixture (multi-episode): header is furniture, not body text"
+python3 - <<'PY' && echo "    [multi header/label] PASS" || { echo "    [multi header/label] FAIL"; fail=1; }
+import json, re, sys, fitz
+rep = json.load(open("out/fixture_multi.reader.pdf.report.json"))
+breaks = rep.get("readerBreaks", [])
+bad = [b for b in breaks if "PROCEDURAL" not in b]
+if bad:
+    print("      break markers missing the full show name:", bad[:3]); sys.exit(1)
+txt = "\n".join(fitz.open("out/fixture_multi.reader.pdf")[i].get_text()
+                for i in range(fitz.open("out/fixture_multi.reader.pdf").page_count))
+# the header must not leak into the reflowed body as an action paragraph
+for ep in ("'Cold Open'", "'Fallen'", "'Young Blood'"):
+    for line in txt.splitlines():
+        if ep in line and not line.lstrip().startswith("SCRIPT PAGE"):
+            print("      header leaked into reader body:", line[:70]); sys.exit(1)
+# the clipped-head signature of the old left-margin bug
+if re.search(r"\bEDURAL\b", txt):
+    print("      show name lost its head (left-clip regression)"); sys.exit(1)
+# the mid-scene left-margin continuation number must survive
+if "5.46pt1" not in txt:
+    print("      mid-scene left-margin scene number was eaten as furniture"); sys.exit(1)
+PY
+
 # real sides: whole-page mode + selective enlargement of the top character
 run_modes () {
   local src="$1" tag="$2"

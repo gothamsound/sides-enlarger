@@ -193,7 +193,7 @@
          target="_blank" rel="noopener noreferrer">Report an issue or request a feature</a></p>
   </section>
 
-  <footer>Sides Enlarger v1.7.3 &middot; Everything runs in your browser: no uploads, no accounts, no tracking.<br>
+  <footer>Sides Enlarger v1.7.4 &middot; Everything runs in your browser: no uploads, no accounts, no tracking.<br>
     <a href="https://github.com/gothamsound/sides-enlarger/blob/main/README.md#run-it-offline-keep-your-own-copy" target="_blank" rel="noopener noreferrer">How to download this page and run it offline</a><br>
     <a href="https://github.com/gothamsound/sides-enlarger/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT License</a>
     &middot; free software, provided as is with no warranty &middot; &copy; 2026 Gotham Sound and Communications, Inc.</footer>
@@ -1040,34 +1040,49 @@
   }
 
   // Header/footer furniture for whole-page mode: rows in the top/bottom page
-  // zones whose digit-stripped text repeats on at least half the pages (show
-  // name headers, CONTINUED: rows, (CONTINUED) footers, page-number rows).
-  // Furniture is page identity: it never scales, and its tight internal line
-  // gaps must not cap the body's enlargement.
+  // zones that repeat across pages. Furniture is page identity: it never
+  // scales, and its tight internal line gaps must not cap the body's
+  // enlargement. Recognized two ways:
+  //  (A) identical text — the whole digit-stripped row repeats on >= half the
+  //      pages (single-show running headers, CONTINUED: rows, (CONTINUED)
+  //      footers). Matched in the top/bottom 15%/12% zones.
+  //  (B) shared show-name anchor — a multi-episode "day" side stitches scenes
+  //      from several episodes, so the header's episode number, title, draft
+  //      color and page number all vary; only the leading show-name token is
+  //      constant across pages. Match on that leading token, but ONLY in the
+  //      extreme EDGE band (top/bottom 8%, above the text block) so sluglines
+  //      and action that dip into the wider zone are never swept up. A row
+  //      with no 3+-letter word at all (a lone page number or "*") is
+  //      furniture only in that same edge band — a bare scene number deeper in
+  //      the top zone (e.g. a mid-scene "5.46pt1" continuation mark in the
+  //      left margin) is body text, not furniture, and must survive reader mode.
   function markFurniture(pages) {
     const zoneOf = (L, P) => (L.y > P.height * 0.85 ? 'top' : (L.y < P.height * 0.12 ? 'bot' : null));
-    // key on words with 3+ letters only: scene numbers, page numbers, dates
-    // and (2)-style suffixes vary per page and must not split the group
-    const keyOf = L => L.text.split(/\s+/)
-      .filter(t => t.replace(/[^A-Za-z]/g, '').length >= 3)
-      .join(' ').toUpperCase();
-    const seen = new Map(); // zone+key -> Set of page indexes
+    const edgeOf = (L, P) => (L.y > P.height * 0.92 ? 'top' : (L.y < P.height * 0.08 ? 'bot' : null));
+    const sig = t => t.replace(/[^A-Za-z]/g, '');
+    // full key: words with 3+ letters only (scene/page numbers, dates and
+    // (2)-style suffixes vary per page and must not split the group)
+    const keyFull = L => L.text.split(/\s+/).filter(t => sig(t).length >= 3).join(' ').toUpperCase();
+    // lead key: the first 3+-letter word (the show name), '' if none
+    const keyLead = L => { for (const t of L.text.split(/\s+/)) if (sig(t).length >= 3) return sig(t).toUpperCase(); return ''; };
+    const seenFull = new Map(), seenLead = new Map(); // zone+key -> Set of page indexes
+    const bump = (m, k, i) => { if (!m.has(k)) m.set(k, new Set()); m.get(k).add(i); };
     for (const P of pages) {
       for (const L of P.lines) {
-        const z = zoneOf(L, P);
-        if (!z || L.cls === 'dialogue' || L.cls === 'cue') continue;
-        const k = z + '|' + keyOf(L);
-        if (!seen.has(k)) seen.set(k, new Set());
-        seen.get(k).add(P.index);
+        if (L.cls === 'dialogue' || L.cls === 'cue') continue;
+        const zf = zoneOf(L, P); if (zf) { const kf = keyFull(L); if (kf) bump(seenFull, zf + '|' + kf, P.index); }
+        const ze = edgeOf(L, P); if (ze) { const kl = keyLead(L); if (kl) bump(seenLead, ze + '|' + kl, P.index); }
       }
     }
     const need = Math.max(2, Math.ceil(pages.length / 2));
+    const hits = (m, k) => (m.get(k) || new Set()).size >= need;
     for (const P of pages) {
       for (const L of P.lines) {
-        const z = zoneOf(L, P);
-        if (!z || L.cls === 'dialogue' || L.cls === 'cue') continue;
-        const k = keyOf(L);
-        if (!k || (seen.get(z + '|' + k) || new Set()).size >= need) L.furn = true;
+        if (L.cls === 'dialogue' || L.cls === 'cue') continue;
+        const zf = zoneOf(L, P);
+        if (zf) { const kf = keyFull(L); if (kf && hits(seenFull, zf + '|' + kf)) { L.furn = true; continue; } }
+        const ze = edgeOf(L, P);
+        if (ze) { const kl = keyLead(L); if (!kl || hits(seenLead, ze + '|' + kl)) L.furn = true; }
       }
     }
   }
@@ -1123,7 +1138,7 @@
     };
     for (const P of pages) {
       if (!P.lines.some(l => l.cls === 'dialogue')) continue;
-      const ML0 = 70, marginR0 = P.width - 80;
+      const marginR0 = P.width - 80;
       // mark where this original script page starts, so on-set page calls
       // can be found in reader view; reference the FULL header name, e.g.
       // 'SCRIPT PAGE 17 · NCIS: NY Ep. 101 "Pilot" Prod. Draft (Full Blue)'
@@ -1133,10 +1148,18 @@
         .filter(l => l.furn && l.y > P.height * 0.85)
         .sort((a2, b2) => b2.y - a2.y)[0];
       if (hdr) {
-        headerText = textFromItems(hdr.items.filter(t => !t.rot && t.x + t.w > ML0 && t.x < marginR0));
-        for (const tail of [' ' + num + '.', ' ' + num]) {
-          if (headerText.endsWith(tail)) { headerText = headerText.slice(0, -tail.length).trim(); break; }
-        }
+        // the header spans the full printable width and its show name
+        // legitimately begins in the far-left margin (left of the body's
+        // x=70), so do NOT clip the left here — a glyph-per-op name drawn as
+        // "RESU|RRECTION" would otherwise lose its head. Drop only rotated
+        // watermarks and right-margin marks (revision stars) past the
+        // page-number column.
+        headerText = textFromItems(hdr.items.filter(t => !t.rot && t.x < marginR0));
+        // drop the trailing printed page number ("... 4/28/26  50.") — already
+        // shown as "SCRIPT PAGE N". Glyph-per-op headers split it ("5 0."), so
+        // tolerate spaces between the number's own characters and a bare dot.
+        const numLoose = num.replace(/[^A-Za-z0-9]/g, '').split('').join('\\s*');
+        headerText = headerText.replace(new RegExp('\\s+' + numLoose + '\\s*\\.?\\s*$'), '').trim();
       }
       els.push({ t: 'break', text: 'SCRIPT PAGE ' + num + (headerText ? ' · ' + headerText : '') });
       const ML = 70, marginR = P.width - 80;
