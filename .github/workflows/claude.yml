@@ -24,4 +24,4 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           # The repo CLAUDE.md (the federation constitution) governs behavior.
           claude_args: |
-            --max-turns 8
+            --max-turns 25
