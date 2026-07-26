@@ -57,6 +57,14 @@ payload is a single UTF-8 JSON object.
    presence. Operator-confirmed presence lives in `speakers` (a confirmed cell is
    a fact, not a suggestion).
 4. **`dialogue_text` / `action_text` are OPTIONAL** — see profiles (§4).
+5. **`show.cast_aliases` (optional, additive; rev e)** records operator
+   identity rulings as a mapping from a printed variant name to its part:
+   `{"VICTOR (ON THE PHONE)": "VICTOR", "YOUNG VALERIE": null}`. `null` pins
+   keep-separate (an explicit "different people" ruling). It is a
+   **derivation input** for the shared fold (scriptparse policy data): it
+   never collapses, renames, or removes `show.characters` entries (rule 2
+   stands), and writers MUST NOT apply it destructively to `show`. Readers
+   that do not understand it ignore it; absence means no rulings recorded.
 
 ## 3. Extensions — the interoperability keystone
 
@@ -81,6 +89,28 @@ another department's work.)
 
 Unregistered experiments use an `x-` prefix (`x-myidea`); promotion to a bare
 key happens by updating this spec.
+
+## 3.5 Source anchors — one convention, everywhere (rev e)
+
+Any `anchor` field, wherever it appears in a `.sceneline` file (extension
+moments, parse artifacts, future fields), uses ONE geometry:
+
+- **PDF page user space: bottom-left origin, +y up, unit = point (1/72 in).**
+  `bbox: [x0, y0, x1, y1]` = lower-left then upper-right corners (`y0 < y1`).
+- An anchor names its page as `{source_doc, page}`, never a bare page int
+  (stitched packets span documents). Where one document exists, `source_doc`
+  matches `source.file`.
+- Coordinates are in the **viewed frame** (page `/Rotate` resolved), with the
+  page's `rotate` carried alongside so renderers can map back.
+- Coordinates are page space **through Form XObject CTMs**: nested `/Form`
+  content is resolved into page space, never raw content-stream numbers.
+- Extractors that measure top-left / +y down (pdfplumber, pymupdf) convert at
+  the extraction boundary (`y0 = H - bottom`, `y1 = H - top`, H = MediaBox
+  height). Never ship top-left numbers and make consumers flip.
+- Never raster/pixel coordinates (DPI-dependent, break across zoom).
+
+Anchors are additive wherever they appear; readers ignore anchor fields they
+do not understand; no `interchange` bump (§6).
 
 ## 4. Profiles: lean vs. full
 
@@ -137,3 +167,10 @@ provenance strings in existing files remain valid, and readers MUST treat
 them as TechSpotter's. (Rename rev requested by the Tablecut session's
 Brief D; the sanitized examples of rev c carry forward. Adopting repos:
 replace your copy with this file whole.)*
+
+*Rev 2026-07-26e — two additive registrations from the scriptparse v0.2
+design round (its PR #2): `show.cast_aliases` (§2 rule 5: operator identity
+rulings as a derivation input; never collapses `show.characters`) and §3.5
+source anchors (one geometry: PDF user space, bottom-left origin, points,
+viewed frame, through Form XObject CTMs, `{source_doc, page}`). No
+`interchange` bump; both additive per §6.*
