@@ -1,7 +1,7 @@
 # The `.sceneline` interchange format — v2
 
 One show, many benches. This spec lets every Gotham scene-breakdown tool —
-**Sceneline** (runs the read), **Tablecut** (will shoot it), **Techspotter** (preps
+**Sceneline** (runs the read), **Tablecut** (will shoot it), **TechSpotter** (preps
 it), **sides-enlarger** (prints it for actors) — read and write one file, so work
 done in any tool flows to the others. File extension stays **`.sceneline`**; the
 payload is a single UTF-8 JSON object.
@@ -13,13 +13,13 @@ payload is a single UTF-8 JSON object.
   "format": "sceneline",
   "interchange": 2,
   "source": {
-    "title": "MB 102",
-    "file": "CombinedPrintable-102.pdf",
-    "generator": "tablework/1.0",
+    "title": "EP 101",
+    "file": "MyShow_EP101.pdf",
+    "generator": "techspotter/1.0",
     "created": "2026-07-26T14:00:00Z"
   },
   "show": {
-    "characters": ["MYRON", "WIN", "..."],
+    "characters": ["VICTOR", "DANA", "..."],
     "cast_list": [],
     "cast_nonspeaking": [],
     "scenes": [
@@ -27,7 +27,7 @@ payload is a single UTF-8 JSON object.
         "scene": "14",
         "scene_heading": "INT. LAB - NIGHT",
         "page_start": 12,
-        "speakers": ["MYRON", "WIN"],
+        "speakers": ["VICTOR", "DANA"],
         "present_suggest": [],
         "dialogue_text": "…optional…",
         "action_text": "…optional…"
@@ -51,7 +51,7 @@ payload is a single UTF-8 JSON object.
 1. **`scene` ids are strings** — real drafts have `"22A"`. Never parse to int;
    order is the array order, not numeric sort.
 2. **Character names are uppercase, trimmed**, and variant names are distinct
-   entries (`YOUNG VALERIE` ≠ `VALERIE`, `MYRON'S TEXT` ≠ `MYRON`) — merging is a
+   entries (`YOUNG VALERIE` ≠ `VALERIE`, `VICTOR'S TEXT` ≠ `VICTOR`) — merging is a
    human decision made in some tool's UI, never implied by the format.
 3. `speakers` = who has dialogue; `present_suggest` = suggested non-speaking
    presence. Operator-confirmed presence lives in `speakers` (a confirmed cell is
@@ -64,9 +64,9 @@ payload is a single UTF-8 JSON object.
 
 | Key | Owner (writer) | Contents |
 |---|---|---|
-| `sound` | Techspotter | department moments: `{"moments":[{"scene":"14","category":"playback"\|"phone"\|"sfx-reaction","snippet":"…","page":12,"characters":["MYRON"],"dismissed":false}]}` |
-| `video` | Techspotter | same shape; categories `phone-screen` \| `tv-screen` \| `video-playback` |
-| `treatments` | Tablecut (candidates writable by any tool) | per-scene handling: `{"14":{"mode":"composite","why":"rapid-fire","source":"tablework"}}` |
+| `sound` | TechSpotter | department moments: `{"moments":[{"scene":"14","category":"playback"\|"phone"\|"sfx-reaction","snippet":"…","page":12,"characters":["VICTOR"],"dismissed":false}]}` |
+| `video` | TechSpotter | same shape; categories `phone-screen` \| `tv-screen` \| `video-playback` |
+| `treatments` | Tablecut (candidates writable by any tool) | per-scene handling: `{"14":{"mode":"composite","why":"rapid-fire","source":"techspotter"}}` |
 | `seats` | Tablecut | seat/mic/camera mapping (rig-specific; lean files usually omit) |
 | `sides` | sides-enlarger | `{"settings":{"scale":…,"mode":…},"characters":{"NAME":{"pages":[…],"highlight":{"key":"…","rgb":"#…"},"enlarge":true,"added":true?}}}` — `highlight` carries both the tool's palette key and a plain rgb so others can render it; `added:true` marks operator name-adds made at the sides bench = **promotion candidates** the matrix tools may offer to lift into `show.characters` (sides-enlarger itself never edits `show` in v1) |
 
@@ -86,7 +86,7 @@ key happens by updating this spec.
 
 - **`full`** — includes `dialogue_text`/`action_text`. **As sensitive as the
   screenplay itself: local-only, never committed to a repo, never uploaded.**
-  Required by tools that index text (Sceneline's tracker; Techspotter's
+  Required by tools that index text (Sceneline's tracker; TechSpotter's
   department scan runs from text but may emit lean output).
 - **`lean`** — the same file with all `dialogue_text`/`action_text` omitted and
   extension `snippet` fields truncated to ≤ 120 chars. Shareable with cast/crew.
@@ -98,7 +98,7 @@ key happens by updating this spec.
 | Tool | Reads | Writes | Change needed |
 |---|---|---|---|
 | Sceneline | v1 today | v1 today | accept `interchange:2`; **preserve `extensions` on round-trip** (small backlog item) |
-| Techspotter | — (new build) | — | build to v2 natively; CSV/XLSX remain as secondary exports |
+| TechSpotter | — (new build) | — | build to v2 natively; CSV/XLSX remain as secondary exports |
 | sides-enlarger | own parsing today | — | add import (skip re-extraction when a `.sceneline` is provided) + export (see its brief) |
 | Tablecut | FSD §5.4 commits to `.sceneline` | planned | adopt v2 by name in the FSD; own `treatments`/`seats`; read `sound`/`video` as treatment candidates (see its brief) |
 
@@ -125,6 +125,15 @@ unachievable through serializers); `sides` block shape registered incl.
 `added:true` promotion candidates; §7 repo hygiene added. (Credit: the
 sides-enlarger session's adoption review.)*
 
-> **Local note (sides-enlarger copy):** the tool formerly called **Tablework**
-> is now **Techspotter**; this copy uses the new name throughout. Fold the rename
-> into the canonical spec when convenient so the copies stop diverging.
+*Rev 2026-07-26c — examples sanitized for public repos: show title, source
+filename, and example character names replaced with fictional placeholders.
+No semantic change; adopting repos should sync their copies.*
+
+*Rev 2026-07-26d — product-name reconciliation: the prep bench is TechSpotter
+(early copies said "Tablework"). This canonical copy has carried the rename
+since its founding; the owner column and generator example read
+techspotter/1.0. Legacy `tablework/*` generator and `"source":"tablework"`
+provenance strings in existing files remain valid, and readers MUST treat
+them as TechSpotter's. (Rename rev requested by the Tablecut session's
+Brief D; the sanitized examples of rev c carry forward. Adopting repos:
+replace your copy with this file whole.)*
