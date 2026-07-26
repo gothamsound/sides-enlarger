@@ -192,7 +192,7 @@
 
   // ---------- .sceneline interchange (spec v2) ----------
   // Pure data helpers: parse/union/reconcile/export the `.sceneline` JSON that
-  // other Gotham benches (Sceneline, Techspotter, Tablecut) write. The file is
+  // other Gotham benches (Sceneline, TechSpotter, Tablecut) write. The file is
   // authoritative for identity + speaker facts; geometry always comes from the
   // PDF, so importing is RECONCILIATION (map each PDF cue name to a file name
   // by the SAME normalizeCueName used everywhere), never skipped extraction.
