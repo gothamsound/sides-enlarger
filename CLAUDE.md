@@ -266,3 +266,21 @@ default options, nothing loaded or saved.
 **Versioning:** bump `version` in package.json for every user-visible release;
 the build stamps it into the page footer (`__VERSION__`) so the public page
 shows which version people are using.
+
+## Federation (scriptparse)
+
+This bench consumes the shared parser/policy/interchange truth from the
+private `gothamsound/scriptparse` repo (the hub). Standing law lives in the
+hub's CLAUDE.md (the constitution) and binds this repo's agents too. The
+rules that most often apply here:
+
+- Parse/identity/interchange divergences are NEVER fixed locally. File a
+  federation motion in scriptparse (issue template) with evidence, affected
+  benches, and a proposed disposition; mention @claude to open litigation.
+- Evidence in motions: fixtures by name + checksum, diffs, numbers. Never
+  script text or real production strings.
+- When a hub sync PR or federation issue arrives here: absorb it per this
+  repo's own requirements docs, run this repo's gates, and comment the ack
+  (or the objection) on the hub issue. Pin bumps are boring on purpose.
+- Escalation is the hub's job: if litigation goes novel, the hub labels
+  needs-peter. Don't ping Peter directly from here for federation matters.
