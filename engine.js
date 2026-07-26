@@ -155,9 +155,10 @@
     const map = new Map();
     const get = name => {
       let e = map.get(name);
-      if (!e) map.set(name, e = { name, lines: 0, blocks: 0, firstPage: 0, dual: false });
+      if (!e) map.set(name, e = { name, lines: 0, blocks: 0, firstPage: 0, pages: [], dual: false });
       return e;
     };
+    const seenOn = (e, pi) => { if (!e.pages.includes(pi)) e.pages.push(pi); };
     for (const P of pages) {
       // A page with no classified dialogue is not script: title pages,
       // coverage, revision tables and CALL SHEETS. A call sheet's column
@@ -174,6 +175,7 @@
         if (!dial || !isPlausibleName(B.name)) continue;
         const e = get(B.name);
         if (!e.firstPage) e.firstPage = P.index;
+        seenOn(e, P.index);
         e.lines += dial; e.blocks++;
       }
       // dual-dialogue cue rows: surface the names for user review (never let
@@ -181,10 +183,185 @@
       for (const n of (P.dualNames || [])) {
         const e = get(n);
         if (!e.firstPage) e.firstPage = P.index;
+        seenOn(e, P.index);
         e.dual = true;
       }
     }
     return [...map.values()].sort((a, b) => b.lines - a.lines || (a.name < b.name ? -1 : 1));
+  }
+
+  // ---------- .sceneline interchange (spec v2) ----------
+  // Pure data helpers: parse/union/reconcile/export the `.sceneline` JSON that
+  // other Gotham benches (Sceneline, Techspotter, Tablecut) write. The file is
+  // authoritative for identity + speaker facts; geometry always comes from the
+  // PDF, so importing is RECONCILIATION (map each PDF cue name to a file name
+  // by the SAME normalizeCueName used everywhere), never skipped extraction.
+  const SLUG_RE = /^(INT|EXT|I\/E|INT\/EXT|EST)[.\s\/]/;
+
+  // Normalize a scene heading for the subset draft-mismatch check: uppercase,
+  // hyphenate en/em dashes, drop a leading scene number and a trailing story-day
+  // code "(D21)"/"(N3)" so the PDF's printed heading compares to the file's.
+  function normalizeHeading(t) {
+    let s = String(t || '').toUpperCase().replace(/[‐-―]/g, '-');
+    s = s.replace(/^\s*[A-Z]{0,3}\d+[A-Z0-9]*\s+(?=INT|EXT|I\/E|EST)/, ''); // leading scene number
+    // Right-margin furniture (revision stars, a repeated scene number, story-day
+    // "(D21)" codes) can fuse into the heading segment. Strip them off the end
+    // repeatedly. Applied to BOTH the PDF heading and the file's scene_heading,
+    // so the comparison stays consistent whichever side carries the day code.
+    let prev;
+    do {
+      prev = s;
+      s = s.replace(/\s*\*+\s*$/, '');                    // revision stars
+      s = s.replace(/\s*\([^)]*\)\s*$/, '');               // trailing (D21) / (PRESENT)
+      s = s.replace(/\s+[A-Z]{0,3}\d+[A-Z0-9]*\s*$/, '');  // right-margin scene number
+    } while (s !== prev);
+    return s.replace(/\s+/g, ' ').trim();
+  }
+
+  // A heading may lead with its scene number FUSED into the same segment
+  // ("18 INT. QUINN'S CAR ...") when the left scene number sits within a word
+  // gap of the slug, so allow an optional leading scene-number token before
+  // INT/EXT (normalizeHeading strips it back off).
+  const SLUG_SEG = /^\s*(?:[A-Z]{0,3}\d+[A-Z0-9]*\s+)?(?:INT|EXT|I\/E|INT\/EXT|EST)[.\s\/]/;
+
+  // Collect the PDF's geometrically-detected scene headings. Scans line
+  // SEGMENTS (not L.text) so right-margin scene numbers — their own segments —
+  // never ride along. Skips pages with no classified dialogue (a call sheet's
+  // scene list is not the script's scene set). Surfaced as report.sluglines.
+  function collectSluglines(pages) {
+    const out = [];
+    for (const P of (pages || [])) {
+      if (!(P.lines || []).some(l => l.cls === 'dialogue')) continue;
+      for (const L of (P.lines || [])) {
+        for (const sg of (L.segments || [])) {
+          const raw = String(sg.text || '').trim();
+          if (SLUG_SEG.test(raw)) { out.push({ text: normalizeHeading(raw), raw, page: P.index }); break; }
+        }
+      }
+    }
+    return out;
+  }
+
+  // Parse a `.sceneline` file. Accepts v1 (no `interchange`/`extensions`) and
+  // v2; refuses interchange > 2 LOUDLY (spec §6 — never guess a newer format).
+  function parseSceneline(text) {
+    let obj;
+    try { obj = JSON.parse(text); }
+    catch (e) { const err = new Error('Not a valid .sceneline file (could not parse JSON).'); err.code = 'SCENELINE_PARSE'; throw err; }
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+      const err = new Error('Not a .sceneline file (expected a JSON object).'); err.code = 'SCENELINE_SHAPE'; throw err;
+    }
+    if (obj.format != null && obj.format !== 'sceneline') {
+      const err = new Error('Not a .sceneline file (format is "' + obj.format + '").'); err.code = 'SCENELINE_SHAPE'; throw err;
+    }
+    const version = (typeof obj.interchange === 'number') ? obj.interchange : 1;
+    if (version > 2) {
+      const err = new Error('This .sceneline file is from a newer tool (interchange ' + version + '); this build reads up to 2. Update sides-enlarger.'); err.code = 'SCENELINE_VERSION'; throw err;
+    }
+    const show = (obj.show && typeof obj.show === 'object') ? obj.show : {};
+    const warnings = [];
+    if (!obj.show) warnings.push('This .sceneline file has no "show" block; no characters or scenes were loaded from it.');
+    const hasText = (show.scenes || []).some(sc => sc && (sc.dialogue_text != null || sc.action_text != null));
+    const profile = (obj.source && obj.source.profile) || (hasText ? 'full' : 'lean');
+    return { envelope: obj, version, profile, show, warnings };
+  }
+
+  // Union one or more parsed files (side packets pull pages from several
+  // episodes). Characters union (normalized, order-preserving); scene headings
+  // collect for the subset check; speakers imply characters.
+  function unionShows(parsed) {
+    const characters = [], charSeen = new Set();
+    const sceneHeadings = new Set(), scenes = [];
+    const speakersByChar = new Map();
+    const addChar = raw => { const n = normalizeCueName(raw); if (n && !charSeen.has(n)) { charSeen.add(n); characters.push(n); } return n; };
+    for (const item of (parsed || [])) {
+      const show = (item && (item.show || (item.envelope && item.envelope.show) || ((item.characters || item.scenes) ? item : null))) || {};
+      for (const c of (show.characters || [])) addChar(c);
+      for (const sc of (show.scenes || [])) {
+        scenes.push(sc);
+        const h = normalizeHeading((sc && sc.scene_heading) || '');
+        if (h) sceneHeadings.add(h);
+        for (const sp of ((sc && sc.speakers) || [])) {
+          const n = addChar(sp);
+          if (n) { if (!speakersByChar.has(n)) speakersByChar.set(n, new Set()); speakersByChar.get(n).add(String(sc.scene)); }
+        }
+      }
+    }
+    return { characters, sceneHeadings, scenes, speakersByChar };
+  }
+
+  // Reconcile the authoritative file identity against PDF geometry.
+  //  - roster: file names first (authoritative), each matched to a PDF cue by
+  //    normalizeCueName (carrying its geometric pages); then geometric-only
+  //    names (in the PDF, in no loaded show) as source:'pdf' — shown secondary.
+  //  - unmatchedFileNames: file names with no dialogue block on this packet
+  //    (reconcile chips; an operator-added MERC #1 with no lines lands here).
+  //  - foreignSluglines: PDF headings that are a member of NO loaded show
+  //    (per-scene "wrong draft/episode?" chips). Subset, never count.
+  function reconcile(unioned, pdf) {
+    const fileNames = (unioned && unioned.characters) || [];
+    const fileSet = new Set(fileNames);
+    const pdfChars = ((pdf && pdf.characters) || []).map(c => ({ src: c, norm: normalizeCueName(c.name) }));
+    const pdfByNorm = new Map();
+    for (const c of pdfChars) if (c.norm && !pdfByNorm.has(c.norm)) pdfByNorm.set(c.norm, c.src);
+    const roster = [];
+    for (const n of fileNames) {
+      const hit = pdfByNorm.get(n);
+      roster.push({ name: n, source: 'file', matched: !!hit, pages: hit ? (hit.pages || []).slice() : [], lines: hit ? (hit.lines || 0) : 0 });
+    }
+    for (const c of pdfChars) {
+      if (c.norm && !fileSet.has(c.norm)) roster.push({ name: c.norm, source: 'pdf', matched: true, pages: (c.src.pages || []).slice(), lines: c.src.lines || 0 });
+    }
+    const unmatchedFileNames = roster.filter(r => r.source === 'file' && !r.matched).map(r => r.name);
+    const foreignSluglines = ((pdf && pdf.sluglines) || []).filter(sl => !unioned.sceneHeadings.has(sl.text));
+    return { roster, unmatchedFileNames, foreignSluglines };
+  }
+
+  // Build our own `extensions.sides` block from live sides state.
+  // state.characters: [{ name, pages, paletteIndex|null, enlarge, added }].
+  function buildSidesBlock(state) {
+    const characters = {};
+    for (const c of ((state && state.characters) || [])) {
+      const entry = { pages: (c.pages || []).slice() };
+      if (c.paletteIndex != null && PALETTE[c.paletteIndex]) {
+        entry.highlight = { key: PALETTE[c.paletteIndex].key, rgb: PALETTE[c.paletteIndex].hex };
+      }
+      entry.enlarge = !!c.enlarge;
+      if (c.added) entry.added = true;
+      characters[c.name] = entry;
+    }
+    return { settings: { scale: (state && state.scale) || null, mode: (state && state.mode) || null }, characters };
+  }
+
+  function leanShow(show) {
+    const scenes = ((show && show.scenes) || []).map(sc => {
+      const c = {}; for (const k of Object.keys(sc)) if (k !== 'dialogue_text' && k !== 'action_text') c[k] = sc[k]; return c;
+    });
+    return Object.assign({}, show, { scenes });
+  }
+
+  // Export a v2 envelope. THE ROUND-TRIP LAW: every foreign extension block and
+  // unknown top-level field is preserved by reference (deep-equal), `show` is
+  // preserved verbatim (v1 never edits the matrix), and only `extensions.sides`
+  // is rewritten. Lean (default) drops screenplay text from `show`; foreign
+  // blocks are never touched (their owner lean-ifies them, not us).
+  function buildScenelineExport(baseEnvelope, sidesBlock, opts) {
+    opts = opts || {};
+    const profile = opts.profile === 'full' ? 'full' : 'lean';
+    const base = (baseEnvelope && typeof baseEnvelope === 'object') ? baseEnvelope : {};
+    const out = {};
+    for (const k of Object.keys(base)) out[k] = base[k]; // unknown top-level fields preserved by reference
+    out.format = 'sceneline';
+    out.interchange = 2;
+    out.source = Object.assign({}, base.source || {}, { generator: 'sides-enlarger/' + (opts.appVersion || '1'), profile });
+    const show = (base.show && typeof base.show === 'object') ? base.show : { characters: [], scenes: [] };
+    out.show = (profile === 'full') ? show : leanShow(show);
+    const outExt = {};
+    const baseExt = (base.extensions && typeof base.extensions === 'object') ? base.extensions : {};
+    for (const k of Object.keys(baseExt)) outExt[k] = baseExt[k]; // foreign blocks preserved by reference
+    outExt.sides = sidesBlock;
+    out.extensions = outExt;
+    return out;
   }
 
   function classifyPage(P, cal) {
@@ -1027,7 +1204,7 @@
           continue;
         }
         // 'other': slug / transition / action
-        if (/^(INT|EXT|I\/E|INT\/EXT|EST)[.\s\/]/.test(text)) {
+        if (SLUG_RE.test(text)) {
           flushPara();
           // margin scene numbers were already stripped from `text` above;
           // show the number once, labeled and set clear of the heading, so
@@ -1320,6 +1497,7 @@
       if (!cal) {
         report.warnings.push('Could not locate character cues geometrically — layout too unusual. PDF returned unchanged.');
         report.characters = [];
+        report.sluglines = [];
         return { bytes, report };
       }
       const wantHl = Object.keys(hl).length > 0;
@@ -1334,6 +1512,7 @@
       cal.colW = colW;
       const anchorC = cal.dialX + colW / 2; // uniform-scale anchor (see pageScale)
       report.characters = collectCharacters(pages);
+      report.sluglines = collectSluglines(pages); // for .sceneline draft-mismatch subset check
       // the character name grows with its block: a block's cue is eligible
       // whenever the block has eligible dialogue (a bare cue-shaped label
       // with no dialogue under it never scales)
@@ -1769,6 +1948,10 @@
       return { bytes: outBytes, report };
     }
 
-    return { process, extract, analyze, PALETTE };
+    return {
+      process, extract, analyze, PALETTE,
+      // .sceneline interchange (spec v2)
+      parseSceneline, unionShows, reconcile, buildSidesBlock, buildScenelineExport, normalizeCueName,
+    };
   };
 });

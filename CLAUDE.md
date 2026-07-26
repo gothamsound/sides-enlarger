@@ -44,7 +44,9 @@ build.mjs               Inlines pdf.js + worker (base64) + pdf-lib + engine.js -
 tools/make_fixture.py   Generates a synthetic screenplay PDF (reportlab) for tests.
 tools/run_engine_node.mjs  Runs engine.js headless on a PDF (uses node_modules build).
 tools/check.py          Independent verifier (pymupdf) + side-by-side page renders.
+tools/test_sceneline.mjs  Headless acceptance tests for the .sceneline interchange.
 tools/test.sh           One-shot: fixture (and optional real PDFs) at 1.0/1.25/1.5.
+docs/sceneline-interchange-v2.md  The .sceneline interchange spec (committed, no script text).
 .nojekyll               So GitHub Pages serves index.html as-is.
 ```
 
@@ -159,6 +161,39 @@ renderer re-segmenting enlarged lines). It also writes
   filter (e.g. unencrypted XMP `/Metadata`) overrides the document default and is
   then stripped from the stream's `/Filter`. Applying one method to everything
   corrupts mixed documents, so the method is resolved per object.
+
+## The `.sceneline` interchange (import/export)
+Gotham's scene-breakdown tools share one JSON file (spec: `docs/sceneline-interchange-v2.md`).
+sides-enlarger reads it as authoritative for **identity and speaker facts** and
+writes its own `sides` block back; **geometry always comes from the PDF**, so
+import is RECONCILIATION, not skipped extraction.
+- **Engine (pure, in the outer factory scope, exported on the return literal):**
+  `parseSceneline` (accepts v1 + v2; refuses `interchange > 2` loudly),
+  `unionShows` (multi-file packets union, since sides pull pages from several
+  episodes), `reconcile` (maps each PDF cue name to a file name with the SAME
+  `normalizeCueName`; emits `roster`, `unmatchedFileNames`, `foreignSluglines`),
+  `buildSidesBlock`, `buildScenelineExport`. `collectSluglines` (uses `SLUG_SEG`,
+  which tolerates a scene number FUSED into the heading segment, and
+  `normalizeHeading`, which strips leading scene numbers + trailing
+  stars/day-codes/right scene numbers) feeds `report.sluglines`; `collectCharacters`
+  now also carries per-character `pages[]`.
+- **Round-trip law (spec §3):** preserve every foreign extension block and
+  unknown top-level field **value-identically** (keep the parsed object, re-emit
+  by reference); rewrite only `extensions.sides`; `show` is preserved verbatim
+  (v1 never edits the matrix). Tests assert **deep-equal**, never byte-equal.
+- **Draft-mismatch is SUBSET, never count:** a side packet is a small pull from a
+  whole-episode file, so scene-count comparison is meaningless. The PDF's detected
+  sluglines must be a subset of the loaded shows' scenes; a heading in no loaded
+  show raises a per-scene chip. No-dialogue pages (call sheets) contribute no
+  sluglines. Getting fewer headings only weakens detection (no false alarms).
+- **UI (`ui_template.html`):** the drop zone accepts `.sceneline` too (multi-file);
+  with a file loaded the rail shows file identity first (unmatched names get an
+  "in show file" chip), geometric-only names in a secondary group; a banner offers
+  a source picker when foreign sluglines appear; "Export .sceneline" is round-trip
+  only (needs a loaded base) and defaults to lean.
+- **Tests:** `tools/test_sceneline.mjs` (wired into `test.sh`) generates synthetic
+  fixtures at runtime (spec §7: never store a `.sceneline`) and asserts acceptance
+  (a)-(e) incl. the deep-equal round-trip. `*.sceneline` is gitignored.
 
 ## Known gotchas (already handled — don't reintroduce)
 - **Revision `*` marks** sit in the far-right margin. A line's fit-width and

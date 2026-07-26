@@ -173,6 +173,14 @@ run_hl () {
   fi
 }
 
+echo "==> .sceneline interchange (import/reconcile/export, acceptance a-e)"
+if node tools/test_sceneline.mjs 2>/dev/null | tee /tmp/sceneline.out | grep -q '^SCENELINE: all'; then
+  grep '    \[' /tmp/sceneline.out
+else
+  grep '    \[' /tmp/sceneline.out || true
+  echo "    [.sceneline] FAIL"; fail=1
+fi
+
 for real in "$@"; do
   name="$(basename "$real" .pdf)"
   echo "==> testing real: $name"

@@ -19,3 +19,6 @@ samplesides/
 
 # python bytecode
 __pycache__/
+
+# .sceneline interchange files can be full-profile (carry screenplay text); never commit them.
+*.sceneline

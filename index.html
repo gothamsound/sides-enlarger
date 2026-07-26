@@ -60,6 +60,38 @@
   #status.err { color:var(--err); font-weight:600; }
   ul#warnings { margin:6px 0 0; padding-left:20px; color:var(--warn); font-size:14px; }
   ul#warnings li { margin:2px 0; }
+  .dropAlt { font-size:13px; color:#999; margin-top:8px; }
+  .dropAlt code { background:var(--accentSoft); border-radius:5px; padding:0 5px; font-size:12px; }
+  /* .sceneline import/export */
+  #reconcileBanner { margin:10px 0 0; background:#fff; border:1px solid #e3ded2; border-radius:10px; padding:11px 13px; font-size:13px; }
+  #reconcileBanner[hidden] { display:none; }
+  .rcLine { color:#555; }
+  .rcLine strong { color:#333; }
+  .rcClear { border:0; background:none; color:#aaa; text-decoration:underline; cursor:pointer; font-size:12px; padding:0 0 0 4px; }
+  .rcClear:hover { color:var(--err); }
+  .rcNote { margin-top:7px; color:#777; }
+  .rcWarn { margin-top:9px; padding:9px 11px; background:#fff7ec; border:1px solid #f0d9b5; border-radius:8px; color:var(--warn); }
+  .rcWarn ul { margin:5px 0 6px; padding-left:18px; }
+  .rcWarn li { margin:1px 0; }
+  .rcPick button { margin:2px 6px 0 0; padding:4px 10px; border:1.5px solid var(--warn); background:#fff;
+                   color:var(--warn); border-radius:8px; font-weight:600; font-size:12px; cursor:pointer; }
+  .rcPick button.on { background:var(--warn); color:#fff; }
+  .chip { display:inline-block; border-radius:10px; padding:0 8px; font-size:11px; font-weight:600;
+          margin-left:6px; vertical-align:middle; white-space:nowrap; }
+  .chip.unmatched { background:#fff1e0; color:var(--warn); }
+  .chip.secondary { background:#eee; color:#888; }
+  .railGroup { margin:12px 0 2px; font-size:11px; text-transform:uppercase; letter-spacing:.05em;
+               color:#aaa; border-top:1px solid #ece7dc; padding-top:8px; }
+  .chRow.unmatched { border-left:3px solid #f0c98a; padding-left:8px; }
+  .chRow.secondary .chName { color:#777; }
+  #exportRow { display:flex; gap:10px; align-items:center; margin:4px 0 0; flex-wrap:wrap; }
+  #exportRow[hidden] { display:none; }
+  #exportBtn { padding:11px 16px; font-size:15px; font-weight:700; color:var(--accent); background:#fff;
+               border:1.5px solid var(--accent); border-radius:10px; cursor:pointer; }
+  #exportBtn:hover { background:var(--accentSoft); }
+  #exportFullBtn { padding:9px 12px; font-size:13px; color:#888; background:none; border:0;
+                   text-decoration:underline; cursor:pointer; }
+  #exportFullBtn[hidden] { display:none; }
   .workspace { display:grid; grid-template-columns:minmax(270px,330px) 1fr; gap:18px; align-items:start; margin-top:16px; }
   @media (max-width:900px){ .workspace { display:block; } #charRail { margin-bottom:16px; } }
   #charRail { display:none; background:#fff; border:1px solid #e3ded2; border-radius:12px; padding:14px 14px 16px; }
@@ -131,7 +163,9 @@
   <div id="drop" tabindex="0" role="button" aria-label="Choose a PDF">
     <strong>Drop your sides PDF here</strong>
     <p>or click to choose a file</p>
-    <input type="file" id="file" accept="application/pdf,.pdf" hidden>
+    <p class="dropAlt">Prepped elsewhere? Also drop a <code>.sceneline</code> show file (one or more) to
+       load the character list from your breakdown instead of re-reading the PDF.</p>
+    <input type="file" id="file" accept="application/pdf,.pdf,.sceneline,application/json" multiple hidden>
   </div>
 
   <div class="controls">
@@ -154,8 +188,13 @@
 
   <div id="status"></div>
   <ul id="warnings"></ul>
+  <div id="reconcileBanner" hidden></div>
 
   <button id="download">Download enlarged PDF</button>
+  <div id="exportRow" hidden>
+    <button id="exportBtn" type="button">Export .sceneline</button>
+    <button id="exportFullBtn" type="button" hidden>Export with script text (full)</button>
+  </div>
 
   <div class="workspace">
     <aside id="charRail" aria-label="Highlight characters">
@@ -193,7 +232,7 @@
          target="_blank" rel="noopener noreferrer">Report an issue or request a feature</a></p>
   </section>
 
-  <footer>Sides Enlarger v1.7.5 &middot; Everything runs in your browser: no uploads, no accounts, no tracking.<br>
+  <footer>Sides Enlarger v1.8.0 &middot; Everything runs in your browser: no uploads, no accounts, no tracking.<br>
     <a href="https://github.com/gothamsound/sides-enlarger/blob/main/README.md#run-it-offline-keep-your-own-copy" target="_blank" rel="noopener noreferrer">How to download this page and run it offline</a><br>
     <a href="https://github.com/gothamsound/sides-enlarger/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT License</a>
     &middot; free software, provided as is with no warranty &middot; &copy; 2026 Gotham Sound and Communications, Inc.</footer>
@@ -396,9 +435,10 @@
     const map = new Map();
     const get = name => {
       let e = map.get(name);
-      if (!e) map.set(name, e = { name, lines: 0, blocks: 0, firstPage: 0, dual: false });
+      if (!e) map.set(name, e = { name, lines: 0, blocks: 0, firstPage: 0, pages: [], dual: false });
       return e;
     };
+    const seenOn = (e, pi) => { if (!e.pages.includes(pi)) e.pages.push(pi); };
     for (const P of pages) {
       // A page with no classified dialogue is not script: title pages,
       // coverage, revision tables and CALL SHEETS. A call sheet's column
@@ -415,6 +455,7 @@
         if (!dial || !isPlausibleName(B.name)) continue;
         const e = get(B.name);
         if (!e.firstPage) e.firstPage = P.index;
+        seenOn(e, P.index);
         e.lines += dial; e.blocks++;
       }
       // dual-dialogue cue rows: surface the names for user review (never let
@@ -422,10 +463,185 @@
       for (const n of (P.dualNames || [])) {
         const e = get(n);
         if (!e.firstPage) e.firstPage = P.index;
+        seenOn(e, P.index);
         e.dual = true;
       }
     }
     return [...map.values()].sort((a, b) => b.lines - a.lines || (a.name < b.name ? -1 : 1));
+  }
+
+  // ---------- .sceneline interchange (spec v2) ----------
+  // Pure data helpers: parse/union/reconcile/export the `.sceneline` JSON that
+  // other Gotham benches (Sceneline, Techspotter, Tablecut) write. The file is
+  // authoritative for identity + speaker facts; geometry always comes from the
+  // PDF, so importing is RECONCILIATION (map each PDF cue name to a file name
+  // by the SAME normalizeCueName used everywhere), never skipped extraction.
+  const SLUG_RE = /^(INT|EXT|I\/E|INT\/EXT|EST)[.\s\/]/;
+
+  // Normalize a scene heading for the subset draft-mismatch check: uppercase,
+  // hyphenate en/em dashes, drop a leading scene number and a trailing story-day
+  // code "(D21)"/"(N3)" so the PDF's printed heading compares to the file's.
+  function normalizeHeading(t) {
+    let s = String(t || '').toUpperCase().replace(/[‐-―]/g, '-');
+    s = s.replace(/^\s*[A-Z]{0,3}\d+[A-Z0-9]*\s+(?=INT|EXT|I\/E|EST)/, ''); // leading scene number
+    // Right-margin furniture (revision stars, a repeated scene number, story-day
+    // "(D21)" codes) can fuse into the heading segment. Strip them off the end
+    // repeatedly. Applied to BOTH the PDF heading and the file's scene_heading,
+    // so the comparison stays consistent whichever side carries the day code.
+    let prev;
+    do {
+      prev = s;
+      s = s.replace(/\s*\*+\s*$/, '');                    // revision stars
+      s = s.replace(/\s*\([^)]*\)\s*$/, '');               // trailing (D21) / (PRESENT)
+      s = s.replace(/\s+[A-Z]{0,3}\d+[A-Z0-9]*\s*$/, '');  // right-margin scene number
+    } while (s !== prev);
+    return s.replace(/\s+/g, ' ').trim();
+  }
+
+  // A heading may lead with its scene number FUSED into the same segment
+  // ("18 INT. QUINN'S CAR ...") when the left scene number sits within a word
+  // gap of the slug, so allow an optional leading scene-number token before
+  // INT/EXT (normalizeHeading strips it back off).
+  const SLUG_SEG = /^\s*(?:[A-Z]{0,3}\d+[A-Z0-9]*\s+)?(?:INT|EXT|I\/E|INT\/EXT|EST)[.\s\/]/;
+
+  // Collect the PDF's geometrically-detected scene headings. Scans line
+  // SEGMENTS (not L.text) so right-margin scene numbers — their own segments —
+  // never ride along. Skips pages with no classified dialogue (a call sheet's
+  // scene list is not the script's scene set). Surfaced as report.sluglines.
+  function collectSluglines(pages) {
+    const out = [];
+    for (const P of (pages || [])) {
+      if (!(P.lines || []).some(l => l.cls === 'dialogue')) continue;
+      for (const L of (P.lines || [])) {
+        for (const sg of (L.segments || [])) {
+          const raw = String(sg.text || '').trim();
+          if (SLUG_SEG.test(raw)) { out.push({ text: normalizeHeading(raw), raw, page: P.index }); break; }
+        }
+      }
+    }
+    return out;
+  }
+
+  // Parse a `.sceneline` file. Accepts v1 (no `interchange`/`extensions`) and
+  // v2; refuses interchange > 2 LOUDLY (spec §6 — never guess a newer format).
+  function parseSceneline(text) {
+    let obj;
+    try { obj = JSON.parse(text); }
+    catch (e) { const err = new Error('Not a valid .sceneline file (could not parse JSON).'); err.code = 'SCENELINE_PARSE'; throw err; }
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+      const err = new Error('Not a .sceneline file (expected a JSON object).'); err.code = 'SCENELINE_SHAPE'; throw err;
+    }
+    if (obj.format != null && obj.format !== 'sceneline') {
+      const err = new Error('Not a .sceneline file (format is "' + obj.format + '").'); err.code = 'SCENELINE_SHAPE'; throw err;
+    }
+    const version = (typeof obj.interchange === 'number') ? obj.interchange : 1;
+    if (version > 2) {
+      const err = new Error('This .sceneline file is from a newer tool (interchange ' + version + '); this build reads up to 2. Update sides-enlarger.'); err.code = 'SCENELINE_VERSION'; throw err;
+    }
+    const show = (obj.show && typeof obj.show === 'object') ? obj.show : {};
+    const warnings = [];
+    if (!obj.show) warnings.push('This .sceneline file has no "show" block; no characters or scenes were loaded from it.');
+    const hasText = (show.scenes || []).some(sc => sc && (sc.dialogue_text != null || sc.action_text != null));
+    const profile = (obj.source && obj.source.profile) || (hasText ? 'full' : 'lean');
+    return { envelope: obj, version, profile, show, warnings };
+  }
+
+  // Union one or more parsed files (side packets pull pages from several
+  // episodes). Characters union (normalized, order-preserving); scene headings
+  // collect for the subset check; speakers imply characters.
+  function unionShows(parsed) {
+    const characters = [], charSeen = new Set();
+    const sceneHeadings = new Set(), scenes = [];
+    const speakersByChar = new Map();
+    const addChar = raw => { const n = normalizeCueName(raw); if (n && !charSeen.has(n)) { charSeen.add(n); characters.push(n); } return n; };
+    for (const item of (parsed || [])) {
+      const show = (item && (item.show || (item.envelope && item.envelope.show) || ((item.characters || item.scenes) ? item : null))) || {};
+      for (const c of (show.characters || [])) addChar(c);
+      for (const sc of (show.scenes || [])) {
+        scenes.push(sc);
+        const h = normalizeHeading((sc && sc.scene_heading) || '');
+        if (h) sceneHeadings.add(h);
+        for (const sp of ((sc && sc.speakers) || [])) {
+          const n = addChar(sp);
+          if (n) { if (!speakersByChar.has(n)) speakersByChar.set(n, new Set()); speakersByChar.get(n).add(String(sc.scene)); }
+        }
+      }
+    }
+    return { characters, sceneHeadings, scenes, speakersByChar };
+  }
+
+  // Reconcile the authoritative file identity against PDF geometry.
+  //  - roster: file names first (authoritative), each matched to a PDF cue by
+  //    normalizeCueName (carrying its geometric pages); then geometric-only
+  //    names (in the PDF, in no loaded show) as source:'pdf' — shown secondary.
+  //  - unmatchedFileNames: file names with no dialogue block on this packet
+  //    (reconcile chips; an operator-added MERC #1 with no lines lands here).
+  //  - foreignSluglines: PDF headings that are a member of NO loaded show
+  //    (per-scene "wrong draft/episode?" chips). Subset, never count.
+  function reconcile(unioned, pdf) {
+    const fileNames = (unioned && unioned.characters) || [];
+    const fileSet = new Set(fileNames);
+    const pdfChars = ((pdf && pdf.characters) || []).map(c => ({ src: c, norm: normalizeCueName(c.name) }));
+    const pdfByNorm = new Map();
+    for (const c of pdfChars) if (c.norm && !pdfByNorm.has(c.norm)) pdfByNorm.set(c.norm, c.src);
+    const roster = [];
+    for (const n of fileNames) {
+      const hit = pdfByNorm.get(n);
+      roster.push({ name: n, source: 'file', matched: !!hit, pages: hit ? (hit.pages || []).slice() : [], lines: hit ? (hit.lines || 0) : 0 });
+    }
+    for (const c of pdfChars) {
+      if (c.norm && !fileSet.has(c.norm)) roster.push({ name: c.norm, source: 'pdf', matched: true, pages: (c.src.pages || []).slice(), lines: c.src.lines || 0 });
+    }
+    const unmatchedFileNames = roster.filter(r => r.source === 'file' && !r.matched).map(r => r.name);
+    const foreignSluglines = ((pdf && pdf.sluglines) || []).filter(sl => !unioned.sceneHeadings.has(sl.text));
+    return { roster, unmatchedFileNames, foreignSluglines };
+  }
+
+  // Build our own `extensions.sides` block from live sides state.
+  // state.characters: [{ name, pages, paletteIndex|null, enlarge, added }].
+  function buildSidesBlock(state) {
+    const characters = {};
+    for (const c of ((state && state.characters) || [])) {
+      const entry = { pages: (c.pages || []).slice() };
+      if (c.paletteIndex != null && PALETTE[c.paletteIndex]) {
+        entry.highlight = { key: PALETTE[c.paletteIndex].key, rgb: PALETTE[c.paletteIndex].hex };
+      }
+      entry.enlarge = !!c.enlarge;
+      if (c.added) entry.added = true;
+      characters[c.name] = entry;
+    }
+    return { settings: { scale: (state && state.scale) || null, mode: (state && state.mode) || null }, characters };
+  }
+
+  function leanShow(show) {
+    const scenes = ((show && show.scenes) || []).map(sc => {
+      const c = {}; for (const k of Object.keys(sc)) if (k !== 'dialogue_text' && k !== 'action_text') c[k] = sc[k]; return c;
+    });
+    return Object.assign({}, show, { scenes });
+  }
+
+  // Export a v2 envelope. THE ROUND-TRIP LAW: every foreign extension block and
+  // unknown top-level field is preserved by reference (deep-equal), `show` is
+  // preserved verbatim (v1 never edits the matrix), and only `extensions.sides`
+  // is rewritten. Lean (default) drops screenplay text from `show`; foreign
+  // blocks are never touched (their owner lean-ifies them, not us).
+  function buildScenelineExport(baseEnvelope, sidesBlock, opts) {
+    opts = opts || {};
+    const profile = opts.profile === 'full' ? 'full' : 'lean';
+    const base = (baseEnvelope && typeof baseEnvelope === 'object') ? baseEnvelope : {};
+    const out = {};
+    for (const k of Object.keys(base)) out[k] = base[k]; // unknown top-level fields preserved by reference
+    out.format = 'sceneline';
+    out.interchange = 2;
+    out.source = Object.assign({}, base.source || {}, { generator: 'sides-enlarger/' + (opts.appVersion || '1'), profile });
+    const show = (base.show && typeof base.show === 'object') ? base.show : { characters: [], scenes: [] };
+    out.show = (profile === 'full') ? show : leanShow(show);
+    const outExt = {};
+    const baseExt = (base.extensions && typeof base.extensions === 'object') ? base.extensions : {};
+    for (const k of Object.keys(baseExt)) outExt[k] = baseExt[k]; // foreign blocks preserved by reference
+    outExt.sides = sidesBlock;
+    out.extensions = outExt;
+    return out;
   }
 
   function classifyPage(P, cal) {
@@ -1268,7 +1484,7 @@
           continue;
         }
         // 'other': slug / transition / action
-        if (/^(INT|EXT|I\/E|INT\/EXT|EST)[.\s\/]/.test(text)) {
+        if (SLUG_RE.test(text)) {
           flushPara();
           // margin scene numbers were already stripped from `text` above;
           // show the number once, labeled and set clear of the heading, so
@@ -1561,6 +1777,7 @@
       if (!cal) {
         report.warnings.push('Could not locate character cues geometrically — layout too unusual. PDF returned unchanged.');
         report.characters = [];
+        report.sluglines = [];
         return { bytes, report };
       }
       const wantHl = Object.keys(hl).length > 0;
@@ -1575,6 +1792,7 @@
       cal.colW = colW;
       const anchorC = cal.dialX + colW / 2; // uniform-scale anchor (see pageScale)
       report.characters = collectCharacters(pages);
+      report.sluglines = collectSluglines(pages); // for .sceneline draft-mismatch subset check
       // the character name grows with its block: a block's cue is eligible
       // whenever the block has eligible dialogue (a bare cue-shaped label
       // with no dialogue under it never scales)
@@ -2010,7 +2228,11 @@
       return { bytes: outBytes, report };
     }
 
-    return { process, extract, analyze, PALETTE };
+    return {
+      process, extract, analyze, PALETTE,
+      // .sceneline interchange (spec v2)
+      parseSceneline, unionShows, reconcile, buildSidesBlock, buildScenelineExport, normalizeCueName,
+    };
   };
 });
 </script>
@@ -2085,6 +2307,11 @@
   var chAddBtn = document.getElementById('chAddBtn');
   var chHiddenToggle = document.getElementById('chHiddenToggle');
   var modeSeg = document.getElementById('modeSeg');
+  var reconcileBanner = document.getElementById('reconcileBanner');
+  var exportRow = document.getElementById('exportRow');
+  var exportBtn = document.getElementById('exportBtn');
+  var exportFullBtn = document.getElementById('exportFullBtn');
+  var APP_VERSION = '1.8.0';
 
   var prefs = loadPrefs();
   if (prefs.scale >= 1 && prefs.scale <= 1.5) slider.value = prefs.scale;
@@ -2098,16 +2325,34 @@
   var originalBytes = null, originalName = 'sides.pdf';
   var outBlobUrl = null, busy = false, queued = false;
   var lastChars = [];        // characters from the last engine report
+  var lastReport = null;     // the last engine report (for re-reconcile)
   var showHidden = false;
+  // .sceneline interchange state
+  var loadedShows = [];      // [{ name, parsed }] parsed .sceneline files (union of shows)
+  var reconcileResult = null;// engine.reconcile output when shows are loaded
+  var sourceMode = 'file';   // 'file' (authoritative) | 'pdf' (fall back to extraction)
 
   // ---- character rail ----
   function railNorm(n) { return String(n || '').toUpperCase().replace(/\s+/g, ' ').trim(); }
   function isHidden(n) { return prefs.hiddenChars.indexOf(n) !== -1; }
 
   function charModel() {
-    // detected characters (engine order: most lines first), then manual ones
+    // With a show file loaded (and driving), identity is authoritative: the
+    // reconcile roster (file names first, then geometric-only names as a
+    // secondary group). Otherwise, geometric detection as before. Manual adds
+    // are always appended.
     var seen = {}, list = [];
-    lastChars.forEach(function (c) { seen[c.name] = true; list.push(c); });
+    if (reconcileResult && sourceMode === 'file') {
+      reconcileResult.roster.forEach(function (r) {
+        seen[r.name] = true;
+        list.push({
+          name: r.name, lines: r.lines || 0, blocks: 0, dual: false,
+          source: r.source, matched: r.matched, secondary: r.source === 'pdf',
+        });
+      });
+    } else {
+      lastChars.forEach(function (c) { seen[c.name] = true; list.push(c); });
+    }
     prefs.manualNames.forEach(function (n) {
       if (!seen[n]) list.push({ name: n, lines: 0, blocks: 0, dual: false, manual: true });
     });
@@ -2115,6 +2360,9 @@
   }
 
   function metaLabel(c) {
+    if (c.source === 'file' && !c.matched) return 'not matched in this PDF (check the draft)';
+    if (c.source === 'pdf') return 'in this PDF · not in show file'
+      + (c.lines ? ' · ' + (c.lines === 1 ? '1 line' : c.lines + ' lines') : '');
     if (c.manual) return 'added by you';
     var bits = [];
     if (c.lines === 0) bits.push('no dialogue found');
@@ -2151,16 +2399,33 @@
     charRail.className = 'on';
     charList.innerHTML = '';
     var model = charModel();
-    var hiddenCount = 0;
+    var hiddenCount = 0, groupShown = false;
     model.forEach(function (c) {
       if (isHidden(c.name) && !showHidden) { hiddenCount++; return; }
+      if (c.secondary && !groupShown) {
+        groupShown = true;
+        var gl = document.createElement('div');
+        gl.className = 'railGroup';
+        gl.textContent = 'Also in this PDF (not in the show file)';
+        charList.appendChild(gl);
+      }
       var row = document.createElement('div');
-      row.className = 'chRow' + ((c.lines <= 1 && !c.manual) ? ' minor' : '');
+      var cls = 'chRow';
+      if (c.source === 'file' && !c.matched) cls += ' unmatched';
+      else if (c.secondary) cls += ' secondary';
+      else if (c.lines <= 1 && !c.manual && !c.source) cls += ' minor';
+      row.className = cls;
       var top = document.createElement('div');
       top.className = 'chTop';
       var nameEl = document.createElement('span');
       nameEl.className = 'chName';
       nameEl.textContent = c.name;
+      if (c.source === 'file' && !c.matched) {
+        var chip = document.createElement('span');
+        chip.className = 'chip unmatched';
+        chip.textContent = 'in show file';
+        nameEl.appendChild(chip);
+      }
       var meta = document.createElement('span');
       meta.className = 'chMeta';
       meta.textContent = metaLabel(c) + (isHidden(c.name) ? ' · hidden' : '');
@@ -2282,6 +2547,151 @@
     return hl;
   }
 
+  // ---- .sceneline interchange (import / reconcile / export) ----
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  function reconcileNow() {
+    if (!loadedShows.length || !lastReport) { reconcileResult = null; return; }
+    var unioned = engine.unionShows(loadedShows.map(function (s) { return s.parsed; }));
+    reconcileResult = engine.reconcile(unioned, {
+      characters: lastReport.characters || [],
+      sluglines: lastReport.sluglines || [],
+    });
+  }
+
+  function setSource(m) {
+    if (sourceMode === m) return;
+    sourceMode = m;            // colors/enlargement are keyed by name, so no reprocess needed
+    renderRail();
+    renderReconcileBanner();
+  }
+
+  function clearShows() {
+    loadedShows = [];
+    reconcileResult = null;
+    sourceMode = 'file';
+    renderReconcileBanner();
+    renderExportRow();
+    renderRail();
+  }
+
+  function renderExportRow() {
+    if (!loadedShows.length) { exportRow.hidden = true; return; }
+    exportRow.hidden = false;
+    exportFullBtn.hidden = !loadedShows.some(function (s) { return s.parsed.profile === 'full'; });
+  }
+
+  function renderReconcileBanner() {
+    if (!loadedShows.length) { reconcileBanner.hidden = true; reconcileBanner.innerHTML = ''; return; }
+    reconcileBanner.hidden = false;
+    var names = loadedShows.map(function (s) { return s.name; }).join(', ');
+    var html = '<div class="rcLine"><strong>Show file' + (loadedShows.length > 1 ? 's' : '') + ':</strong> '
+      + esc(names) + ' &middot; '
+      + (sourceMode === 'file' ? 'character identity comes from the file' : "using the PDF's own extraction")
+      + ' <button type="button" class="rcClear" id="rcClear">clear</button></div>';
+    var unmatched = (reconcileResult && reconcileResult.unmatchedFileNames) || [];
+    var foreign = (reconcileResult && reconcileResult.foreignSluglines) || [];
+    if (sourceMode === 'file' && unmatched.length) {
+      html += '<div class="rcNote">' + unmatched.length + ' name' + (unmatched.length > 1 ? 's' : '')
+        + ' in the show file had no dialogue on these pages (check the draft matches): '
+        + esc(unmatched.join(', ')) + '.</div>';
+    }
+    if (foreign.length) {
+      html += '<div class="rcWarn"><strong>Possible draft or episode mismatch.</strong> '
+        + foreign.length + ' scene heading' + (foreign.length > 1 ? 's' : '') + ' in this PDF '
+        + (foreign.length > 1 ? 'are' : 'is') + ' in none of the loaded show file'
+        + (loadedShows.length > 1 ? 's' : '') + ':<ul>';
+      foreign.slice(0, 8).forEach(function (f) {
+        html += '<li>' + esc(f.raw) + ' <span style="opacity:.65">(p.' + esc(f.page) + ')</span></li>';
+      });
+      if (foreign.length > 8) html += '<li>&hellip; and ' + (foreign.length - 8) + ' more</li>';
+      html += '</ul><div class="rcPick">Which source drives the character list? '
+        + '<button type="button" id="srcFile"' + (sourceMode === 'file' ? ' class="on"' : '') + '>Show file</button>'
+        + '<button type="button" id="srcPdf"' + (sourceMode === 'pdf' ? ' class="on"' : '') + '>PDF extraction</button></div></div>';
+    }
+    reconcileBanner.innerHTML = html;
+    var rc = document.getElementById('rcClear'); if (rc) rc.addEventListener('click', clearShows);
+    var sf = document.getElementById('srcFile'); if (sf) sf.addEventListener('click', function () { setSource('file'); });
+    var sp = document.getElementById('srcPdf'); if (sp) sp.addEventListener('click', function () { setSource('pdf'); });
+  }
+
+  function pagesForName(name) {
+    if (reconcileResult) {
+      for (var i = 0; i < reconcileResult.roster.length; i++)
+        if (reconcileResult.roster[i].name === name) return reconcileResult.roster[i].pages || [];
+    }
+    var f = lastChars.filter(function (x) { return x.name === name; })[0];
+    return (f && f.pages) || [];
+  }
+
+  function currentSidesCharacters() {
+    var out = [];
+    charModel().forEach(function (c) {
+      if (isHidden(c.name)) return;
+      var pIdx = prefs.charColors[c.name];
+      out.push({
+        name: c.name,
+        pages: pagesForName(c.name),
+        paletteIndex: pIdx == null ? null : pIdx,
+        enlarge: prefs.enlargeMode === 'selected' ? !!prefs.enlargeChars[c.name] : true,
+        added: prefs.manualNames.indexOf(c.name) !== -1,
+      });
+    });
+    return out;
+  }
+
+  function exportSceneline(profile) {
+    if (!loadedShows.length) return;
+    var block = engine.buildSidesBlock({
+      scale: +slider.value, mode: prefs.enlargeMode, characters: currentSidesCharacters(),
+    });
+    loadedShows.forEach(function (s, i) {
+      var env = engine.buildScenelineExport(s.parsed.envelope, block, { profile: profile, appVersion: APP_VERSION });
+      var url = URL.createObjectURL(new Blob([JSON.stringify(env, null, 2)], { type: 'application/json' }));
+      setTimeout(function () {
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = s.name.replace(/\.sceneline$/i, '') + '.sceneline';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+      }, i * 250); // stagger so browsers allow multiple downloads
+    });
+    setStatus('Exported ' + loadedShows.length + ' .sceneline file' + (loadedShows.length > 1 ? 's' : '')
+      + ' (' + profile + "). Your sides prefs travel in the file's \"sides\" block; other departments' blocks are untouched.");
+  }
+
+  function acceptScenelineFile(file) {
+    return file.text().then(function (text) {
+      var parsed;
+      try { parsed = engine.parseSceneline(text); }
+      catch (e) { setStatus(e && e.message ? e.message : 'Could not read that .sceneline file.', true); return; }
+      loadedShows = loadedShows.filter(function (s) { return s.name !== file.name; });
+      loadedShows.push({ name: file.name, parsed: parsed });
+      (parsed.warnings || []).forEach(function (w) {
+        var li = document.createElement('li'); li.textContent = file.name + ': ' + w; warnUl.appendChild(li);
+      });
+      reconcileNow();
+      renderReconcileBanner();
+      renderExportRow();
+      if (originalBytes) renderRail();
+      else setStatus('Loaded show file "' + file.name + '". Now drop the matching sides PDF.');
+    });
+  }
+
+  function routeFiles(fileList) {
+    var files = Array.prototype.slice.call(fileList || []);
+    if (!files.length) return;
+    var pdfs = files.filter(function (f) { return /\.pdf$/i.test(f.name) || /pdf$/i.test(f.type); });
+    var scenes = files.filter(function (f) { return /\.sceneline$/i.test(f.name) || (/\.json$/i.test(f.name) && pdfs.indexOf(f) === -1); });
+    scenes.forEach(acceptScenelineFile);
+    if (pdfs.length) acceptFile(pdfs[pdfs.length - 1]);
+    else if (!scenes.length) acceptFile(files[0]); // let acceptFile surface the not-a-PDF message
+  }
+
   // ---- canvas preview (works on iOS/Android where PDF iframes don't) ----
   var docB = null, docA = null, curPage = 1, numPages = 1, renderSeq = 0;
 
@@ -2377,7 +2787,11 @@
         outBlobUrl = URL.createObjectURL(blob);
         showWarnings(res.report);
         lastChars = res.report.characters || [];
+        lastReport = res.report;
+        reconcileNow();
         renderRail();
+        renderReconcileBanner();
+        renderExportRow();
         var prevA = docA;
         return openDoc(res.bytes).then(function (d) {
           docA = d; if (prevA) prevA.destroy();
@@ -2462,11 +2876,13 @@
     drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove('hover'); });
   });
   drop.addEventListener('drop', function (e) {
-    acceptFile(e.dataTransfer.files && e.dataTransfer.files[0]);
+    routeFiles(e.dataTransfer && e.dataTransfer.files);
   });
   drop.addEventListener('click', function () { fileInput.click(); });
   drop.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') fileInput.click(); });
-  fileInput.addEventListener('change', function () { acceptFile(fileInput.files[0]); });
+  fileInput.addEventListener('change', function () { routeFiles(fileInput.files); });
+  exportBtn.addEventListener('click', function () { exportSceneline('lean'); });
+  exportFullBtn.addEventListener('click', function () { exportSceneline('full'); });
 
   // slider
   slider.addEventListener('input', function () {
