@@ -25,3 +25,6 @@ jobs:
           # The repo CLAUDE.md (the federation constitution) governs behavior.
           claude_args: |
             --max-turns 25
+            --allowedTools "Bash(gh pr create:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue edit:*),Bash(pip install:*),Bash(pytest:*),Bash(python3:*)"
+        env:
+          GH_TOKEN: ${{ github.token }}
