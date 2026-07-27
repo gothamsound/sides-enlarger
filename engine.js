@@ -1391,7 +1391,14 @@
         for (const ln of lines) {
           ensure(lh);
           if (opts2.hl) {
-            page.drawRectangle({ x: MX - 6, y: y - lh + sz * 0.18, width: colW + 12, height: lh, color: opts2.hl });
+            // Balanced top/bottom breathing room: center the strip on the
+            // line's glyphs (Times ascent ~0.7, descent ~0.2 of size) instead
+            // of hugging the baseline, which left air on top but cropped
+            // descenders at the bottom. pad on each side; height >= lh keeps a
+            // multi-line block a continuous strip.
+            const base = y - lh + sz * 0.32, pad = sz * 0.30;
+            page.drawRectangle({ x: MX - 6, y: base - sz * 0.20 - pad, width: colW + 12,
+              height: sz * 0.90 + 2 * pad, color: opts2.hl });
           }
           const tw = font.widthOfTextAtSize(ln, sz);
           const x = opts2.align === 'center' ? (W - tw) / 2 : (opts2.align === 'right' ? W - MX - tw : MX);

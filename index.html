@@ -48,9 +48,19 @@
   .segAlt button { color:var(--warn); }
   .segAlt button.on { color:#fff; }
   @media (max-width:600px){ .seg button { padding:9px 9px; font-size:13px; } .segAlt { margin-left:0; } }
-  .aa { border:1.5px solid #ccc; background:#fff; color:#999; border-radius:8px; font-size:13px;
-        font-weight:700; padding:4px 8px; cursor:pointer; line-height:1; }
-  .aa.on { border-color:var(--accent); background:var(--accent); color:#fff; }
+  /* "Selected characters" mode: pick who to enlarge */
+  .railInstruct { font-size:14px; font-weight:600; color:var(--accent); background:var(--accentSoft);
+                  border-radius:8px; padding:9px 11px; margin:0 0 8px; }
+  .enlChk { flex:none; width:28px; height:28px; border:2px solid #b7b7b7; border-radius:7px; background:#fff;
+            color:#fff; font-size:17px; font-weight:800; line-height:1; cursor:pointer; padding:0;
+            display:flex; align-items:center; justify-content:center; }
+  .enlChk.on { background:var(--accent); border-color:var(--accent); }
+  .chTop.sel { cursor:pointer; align-items:center; padding:4px; margin:-4px; border-radius:9px; }
+  .chTop.sel:hover { background:#f6f7e8; }
+  .chRow.enl { background:var(--accentSoft); border-radius:9px; }
+  .chRemove { flex:none; border:0; background:none; color:#b0b0b0; font-size:12px; text-decoration:underline;
+              cursor:pointer; padding:2px 4px; }
+  .chRemove:hover { color:var(--err); }
   input[type=range] { flex:1; min-width:200px; accent-color: var(--accent); height:34px; }
   #scaleVal { font-family:"Courier New",monospace; font-size:20px; font-weight:700; width:70px; }
   #download { display:none; width:100%; padding:18px; font-size:21px; font-weight:700; color:#fff;
@@ -103,8 +113,6 @@
   .chTop { display:flex; align-items:baseline; gap:8px; }
   .chName { font-weight:700; font-size:14px; overflow-wrap:anywhere; }
   .chMeta { color:#888; font-size:12px; flex:1; }
-  .chHide { border:0; background:none; color:#bbb; font-size:17px; cursor:pointer; padding:2px 6px; line-height:1; }
-  .chHide:hover { color:var(--err); }
   .swRow { display:flex; gap:7px; margin-top:7px; flex-wrap:wrap; }
   .sw { width:30px; height:30px; border-radius:50%; border:1.5px solid rgba(0,0,0,.15); cursor:pointer;
         font-size:15px; line-height:1; display:flex; align-items:center; justify-content:center; padding:0; }
@@ -115,8 +123,6 @@
                  font-size:14px; text-transform:uppercase; }
   .chAdd button { padding:9px 14px; border:1px solid var(--accent); background:#fff; color:var(--accent);
                   border-radius:8px; font-weight:700; cursor:pointer; }
-  #chHiddenToggle { margin-top:10px; border:0; background:none; color:#999; text-decoration:underline;
-                    cursor:pointer; font-size:13px; padding:0; }
   .previews { display:none; min-width:0; }
   .previews.on { display:block; }
   .pager { display:flex; align-items:center; justify-content:center; gap:14px; margin-bottom:10px; }
@@ -207,7 +213,6 @@
         <input id="chAddName" placeholder="Add a missed name&hellip;" maxlength="40" aria-label="Add a character name">
         <button id="chAddBtn" type="button">Add</button>
       </div>
-      <button id="chHiddenToggle" type="button" hidden></button>
     </aside>
 
     <div class="previews" id="previews">
@@ -232,7 +237,7 @@
          target="_blank" rel="noopener noreferrer">Report an issue or request a feature</a></p>
   </section>
 
-  <footer>Sides Enlarger v1.8.0 &middot; Everything runs in your browser: no uploads, no accounts, no tracking.<br>
+  <footer>Sides Enlarger v1.8.1 &middot; Everything runs in your browser: no uploads, no accounts, no tracking.<br>
     <a href="https://github.com/gothamsound/sides-enlarger/blob/main/README.md#run-it-offline-keep-your-own-copy" target="_blank" rel="noopener noreferrer">How to download this page and run it offline</a><br>
     <a href="https://github.com/gothamsound/sides-enlarger/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT License</a>
     &middot; free software, provided as is with no warranty &middot; &copy; 2026 Gotham Sound and Communications, Inc.</footer>
@@ -1671,7 +1676,14 @@
         for (const ln of lines) {
           ensure(lh);
           if (opts2.hl) {
-            page.drawRectangle({ x: MX - 6, y: y - lh + sz * 0.18, width: colW + 12, height: lh, color: opts2.hl });
+            // Balanced top/bottom breathing room: center the strip on the
+            // line's glyphs (Times ascent ~0.7, descent ~0.2 of size) instead
+            // of hugging the baseline, which left air on top but cropped
+            // descenders at the bottom. pad on each side; height >= lh keeps a
+            // multi-line block a continuous strip.
+            const base = y - lh + sz * 0.32, pad = sz * 0.30;
+            page.drawRectangle({ x: MX - 6, y: base - sz * 0.20 - pad, width: colW + 12,
+              height: sz * 0.90 + 2 * pad, color: opts2.hl });
           }
           const tw = font.widthOfTextAtSize(ln, sz);
           const x = opts2.align === 'center' ? (W - tw) / 2 : (opts2.align === 'right' ? W - MX - tw : MX);
@@ -2305,13 +2317,12 @@
   var charList = document.getElementById('charList');
   var chAddName = document.getElementById('chAddName');
   var chAddBtn = document.getElementById('chAddBtn');
-  var chHiddenToggle = document.getElementById('chHiddenToggle');
   var modeSeg = document.getElementById('modeSeg');
   var reconcileBanner = document.getElementById('reconcileBanner');
   var exportRow = document.getElementById('exportRow');
   var exportBtn = document.getElementById('exportBtn');
   var exportFullBtn = document.getElementById('exportFullBtn');
-  var APP_VERSION = '1.8.0';
+  var APP_VERSION = '1.8.1';
 
   var prefs = loadPrefs();
   if (prefs.scale >= 1 && prefs.scale <= 1.5) slider.value = prefs.scale;
@@ -2326,7 +2337,6 @@
   var outBlobUrl = null, busy = false, queued = false;
   var lastChars = [];        // characters from the last engine report
   var lastReport = null;     // the last engine report (for re-reconcile)
-  var showHidden = false;
   // .sceneline interchange state
   var loadedShows = [];      // [{ name, parsed }] parsed .sceneline files (union of shows)
   var reconcileResult = null;// engine.reconcile output when shows are loaded
@@ -2398,10 +2408,16 @@
     if (!originalBytes) return;
     charRail.className = 'on';
     charList.innerHTML = '';
-    var model = charModel();
-    var hiddenCount = 0, groupShown = false;
+    var model = charModel().filter(function (c) { return !isHidden(c.name); });
+    var sel = prefs.enlargeMode === 'selected';
+    if (sel && model.length) {
+      var instr = document.createElement('p');
+      instr.className = 'railInstruct';
+      instr.textContent = 'Tap who you’re reading. Their lines get bigger.';
+      charList.appendChild(instr);
+    }
+    var groupShown = false;
     model.forEach(function (c) {
-      if (isHidden(c.name) && !showHidden) { hiddenCount++; return; }
       if (c.secondary && !groupShown) {
         groupShown = true;
         var gl = document.createElement('div');
@@ -2409,14 +2425,28 @@
         gl.textContent = 'Also in this PDF (not in the show file)';
         charList.appendChild(gl);
       }
+      var on = sel && !!prefs.enlargeChars[c.name];
       var row = document.createElement('div');
       var cls = 'chRow';
       if (c.source === 'file' && !c.matched) cls += ' unmatched';
       else if (c.secondary) cls += ' secondary';
       else if (c.lines <= 1 && !c.manual && !c.source) cls += ' minor';
+      if (on) cls += ' enl';
       row.className = cls;
       var top = document.createElement('div');
-      top.className = 'chTop';
+      top.className = 'chTop' + (sel ? ' sel' : '');
+      // enlarge checkbox (Selected mode only): a big, obvious box; the whole
+      // name row is also a tap target so a tired thumb can't miss it.
+      if (sel) {
+        var chk = document.createElement('button');
+        chk.type = 'button';
+        chk.className = 'enlChk' + (on ? ' on' : '');
+        chk.setAttribute('aria-pressed', on ? 'true' : 'false');
+        chk.setAttribute('aria-label', (on ? 'Enlarging ' : 'Enlarge ') + c.name);
+        chk.textContent = on ? '✓' : '';
+        chk.addEventListener('click', function (e) { e.stopPropagation(); toggleEnlarge(c.name); });
+        top.appendChild(chk);
+      }
       var nameEl = document.createElement('span');
       nameEl.className = 'chName';
       nameEl.textContent = c.name;
@@ -2428,27 +2458,23 @@
       }
       var meta = document.createElement('span');
       meta.className = 'chMeta';
-      meta.textContent = metaLabel(c) + (isHidden(c.name) ? ' · hidden' : '');
-      var hide = document.createElement('button');
-      hide.type = 'button';
-      hide.className = 'chHide';
-      hide.title = isHidden(c.name) ? 'restore' : (c.manual ? 'remove' : 'not a character — hide');
-      hide.textContent = isHidden(c.name) ? '↩' : '×';
-      hide.addEventListener('click', function () { toggleHide(c); });
+      meta.textContent = metaLabel(c);
       top.appendChild(nameEl); top.appendChild(meta);
-      if (prefs.enlargeMode === 'selected' && !isHidden(c.name)) {
-        var aa = document.createElement('button');
-        aa.type = 'button';
-        aa.className = 'aa' + (prefs.enlargeChars[c.name] ? ' on' : '');
-        aa.textContent = 'Aa';
-        aa.title = prefs.enlargeChars[c.name] ? 'dialogue will be enlarged'
-                                              : "tap to enlarge this character's dialogue";
-        aa.addEventListener('click', function () { toggleEnlarge(c.name); });
-        top.appendChild(aa);
+      // quiet "remove" ONLY for names the user typed in (undo a typo'd add).
+      // Detected names have no remove: unused ones are harmless, and it kills
+      // the accidental-tap risk of an "x" on every row.
+      if (c.manual) {
+        var rm = document.createElement('button');
+        rm.type = 'button';
+        rm.className = 'chRemove';
+        rm.title = 'remove this name';
+        rm.textContent = 'remove';
+        rm.addEventListener('click', function (e) { e.stopPropagation(); removeName(c.name); });
+        top.appendChild(rm);
       }
-      top.appendChild(hide);
+      if (sel) top.addEventListener('click', function () { toggleEnlarge(c.name); });
       row.appendChild(top);
-      if (!isHidden(c.name)) row.appendChild(swatchRow(c));
+      row.appendChild(swatchRow(c));
       charList.appendChild(row);
     });
     if (!model.length) {
@@ -2457,12 +2483,6 @@
       p.textContent = 'No character cues detected in this PDF. You can still add a name below.';
       charList.appendChild(p);
     }
-    var totalHidden = model.filter(function (c) { return isHidden(c.name); }).length;
-    if (totalHidden > 0) {
-      chHiddenToggle.hidden = false;
-      chHiddenToggle.textContent = showHidden ? 'Collapse hidden names' :
-        'Show ' + totalHidden + ' hidden name' + (totalHidden > 1 ? 's' : '');
-    } else chHiddenToggle.hidden = true;
   }
 
   function assignColor(name, idx) {
@@ -2511,16 +2531,12 @@
   });
   syncModeSeg();
 
-  function toggleHide(c) {
-    var i = prefs.hiddenChars.indexOf(c.name);
-    if (i !== -1) prefs.hiddenChars.splice(i, 1);
-    else {
-      if (c.manual) {
-        var mi = prefs.manualNames.indexOf(c.name);
-        if (mi !== -1) prefs.manualNames.splice(mi, 1);
-      } else prefs.hiddenChars.push(c.name);
-      delete prefs.charColors[c.name];
-    }
+  // Remove a name the user typed in (undo a typo'd add), and its prefs.
+  function removeName(name) {
+    var mi = prefs.manualNames.indexOf(name);
+    if (mi !== -1) prefs.manualNames.splice(mi, 1);
+    delete prefs.charColors[name];
+    delete prefs.enlargeChars[name];
     savePrefs(prefs);
     renderRail();
     scheduleProcess();
@@ -2537,7 +2553,6 @@
     renderRail();
   });
   chAddName.addEventListener('keydown', function (e) { if (e.key === 'Enter') chAddBtn.click(); });
-  chHiddenToggle.addEventListener('click', function () { showHidden = !showHidden; renderRail(); });
 
   function activeHighlights() {
     var hl = {};
@@ -2813,7 +2828,7 @@
           var scaled = res.report.pages.filter(function (p) { return p.appliedScale > 1.001; }).length;
           var what = res.report.mode === 'page' ? 'everything' : 'dialogue';
           var note = (prefs.enlargeMode === 'selected' && !(opts.enlargeOnly && opts.enlargeOnly.length))
-            ? ' Tap "Aa" next to a character to choose whose dialogue grows.' : '';
+            ? ' Check the characters you’re reading, in the list, to choose whose dialogue grows.' : '';
           setStatus('Done — ' + what + ' enlarged on ' + scaled + ' of ' + res.report.pages.length + ' pages.'
                     + highlightSummary(res.report) + note);
         }
