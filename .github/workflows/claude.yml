@@ -24,7 +24,22 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           # The repo CLAUDE.md (the federation constitution) governs behavior.
           claude_args: |
-            --max-turns 25
-            --allowedTools "Bash(gh pr create:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue edit:*),Bash(pip install:*),Bash(pytest:*),Bash(python3:*)"
+            --max-turns 40
+          settings: |
+            {
+              "permissions": {
+                "allow": [
+                  "Bash(gh pr create:*)",
+                  "Bash(gh pr view:*)",
+                  "Bash(gh pr diff:*)",
+                  "Bash(gh issue view:*)",
+                  "Bash(gh issue comment:*)",
+                  "Bash(gh issue edit:*)",
+                  "Bash(pip install:*)",
+                  "Bash(pytest:*)",
+                  "Bash(python3:*)"
+                ]
+              }
+            }
         env:
           GH_TOKEN: ${{ github.token }}
