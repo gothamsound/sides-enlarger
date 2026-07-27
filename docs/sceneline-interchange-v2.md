@@ -65,6 +65,21 @@ payload is a single UTF-8 JSON object.
    never collapses, renames, or removes `show.characters` entries (rule 2
    stands), and writers MUST NOT apply it destructively to `show`. Readers
    that do not understand it ignore it; absence means no rulings recorded.
+6. **`scenes[].present_confirmed` (optional, additive; rev f)** records
+   operator-confirmed presence WITHOUT lines, for tools that distinguish
+   "in the scene, silent" from "speaks" (TechSpotter's matrix does). Rule 3
+   stands for tools without the distinction: they MAY fold confirmed
+   presence into `speakers` as before. Readers ignore the field if unknown.
+7. **`show.burn_ins` (optional, additive; rev g)** — burn-in/watermark text a
+   parsing engine stripped before analysis, surfaced per the never-silent
+   doctrine (sibling of `rejected_cues`). Entries:
+   `{"text": "…", "signal": "rotated" | "repeated-position", "pages": N,
+   "count": N, "anchor": {…}}` — `anchor` is the first-seen occurrence in
+   §3.5 geometry; `pages` = distinct pages stripped from; `count` = total
+   occurrences. The strip rules themselves are scriptparse policy data
+   (`burn_in` rule type, hub issue #16 ruling) — this field only registers
+   how the record rides the file. Readers ignore it if unknown; review UIs
+   render it as a notice rail.
 
 ## 3. Extensions — the interoperability keystone
 
@@ -174,3 +189,15 @@ rulings as a derivation input; never collapses `show.characters`) and §3.5
 source anchors (one geometry: PDF user space, bottom-left origin, points,
 viewed frame, through Form XObject CTMs, `{source_doc, page}`). No
 `interchange` bump; both additive per §6.*
+
+*Rev 2026-07-26f — additive: `scenes[].present_confirmed` (§2 rule 6)
+records operator-confirmed silent presence, preserving the speaks vs
+present-no-lines distinction TechSpotter's matrix draws (Peter,
+2026-07-26). No `interchange` bump.*
+
+*Rev 2026-07-27g — additive: `show.burn_ins` (§2 rule 7) registers the
+surfaced strip record for burn-in/watermark text (hub issue #16 ruling:
+both strip signals adopted as scriptparse policy data; the record rides
+the show per the never-silent doctrine). Spec home is now the Sceneline
+bench per that ruling; this rev also adopts rev f's text whole from the
+prior canonical copy (TechSpotter). No `interchange` bump.*
