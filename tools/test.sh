@@ -50,6 +50,15 @@ check_one () {  # src outpdf label renderdir
   fi
 }
 
+echo "==> ios/webkit floor: getTextContent ReadableStream async-iterator (scriptparse #43 cliff 2)"
+if node tools/test_ios_stream.mjs out/fixture.pdf 2>/dev/null | grep -q '^IOS-STREAM: ok'; then
+  echo "    [ios stream polyfill] PASS"
+else
+  echo "    [ios stream polyfill] FAIL"
+  node tools/test_ios_stream.mjs out/fixture.pdf 2>&1 | grep -E 'control|engine|FAIL' || true
+  fail=1
+fi
+
 echo "==> testing fixture"
 run_one out/fixture.pdf fixture
 

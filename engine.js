@@ -1098,6 +1098,36 @@
   return function createSidesEngine({ pdfjsLib, PDFLib }) {
 
     async function extract(bytes) {
+      // pdf.js 4.2+/5.x iterates its text-content ReadableStream with `for await`.
+      // WebKit only shipped ReadableStream async iteration in Safari 26, so every
+      // iPhone on Safari 15.4-18.x throws at the FIRST getTextContent (scriptparse
+      // #43, cliff 2). core-js does not patch web streams (the legacy build sails
+      // through) and Node has been async-iterable since 16, so this is invisible to
+      // both the legacy polyfills and Node smoke tests. Install the standard
+      // MDN-shape asyncIterator on the main thread before any getTextContent.
+      // Feature-detected and idempotent: a no-op on Safari 26+ and on Node.
+      if (typeof ReadableStream !== 'undefined' && !ReadableStream.prototype[Symbol.asyncIterator]) {
+        const values = function ({ preventCancel = false } = {}) {
+          const reader = this.getReader();
+          return {
+            async next() {
+              try {
+                const r = await reader.read();
+                if (r.done) reader.releaseLock();
+                return r;
+              } catch (e) { reader.releaseLock(); throw e; }
+            },
+            async return(value) {
+              if (!preventCancel) { const c = reader.cancel(value); reader.releaseLock(); await c; }
+              else { reader.releaseLock(); }
+              return { done: true, value };
+            },
+            [Symbol.asyncIterator]() { return this; },
+          };
+        };
+        if (!ReadableStream.prototype.values) ReadableStream.prototype.values = values;
+        ReadableStream.prototype[Symbol.asyncIterator] = ReadableStream.prototype.values;
+      }
       const task = pdfjsLib.getDocument({
         data: bytes.slice(), useSystemFonts: true, isEvalSupported: false, disableFontFace: true,
       });
