@@ -103,6 +103,26 @@ node tools/run_engine_node.mjs out/fixture.pdf out/fixture.reader.pdf 1.25 'LAUR
   >/dev/null 2>out/fixture.reader.err || { echo "    [reader mode] ENGINE ERROR:"; cat out/fixture.reader.err; fail=1; }
 check_one out/fixture.pdf out/fixture.reader.pdf "reader mode @ 1.25" "$RENDER_DIR/fixture_reader"
 
+# watermarked side: a rotated per-recipient watermark drops a glyph onto minor
+# cue baselines. Without the rotated-item guard those cues fail geometric
+# detection and their characters vanish silently (scriptparse #37); the guard
+# excludes item.rot from line-building so the full cast is recovered, and a
+# never-silent warning still flags the watermark.
+echo "==> fixture (watermarked): rotated burn-in guard recovers the cast (scriptparse #37)"
+node tools/run_engine_node.mjs out/fixture_wm.pdf out/fixture_wm.out.pdf 1.25 \
+  >/dev/null 2>out/fixture_wm.err || { echo "    [watermark] ENGINE ERROR:"; cat out/fixture_wm.err; fail=1; }
+python3 - <<'PY' && echo "    [watermark: cast recovered + never-silent] PASS" || { echo "    [watermark] FAIL"; fail=1; }
+import json
+clean = sorted(c["name"] for c in json.load(open("out/fixture.1.25.pdf.report.json")).get("characters", []))
+rep = json.load(open("out/fixture_wm.out.pdf.report.json"))
+wm = sorted(c["name"] for c in rep.get("characters", []))
+warns = rep.get("warnings", [])
+assert wm == clean, "cast not recovered under watermark: %r vs clean %r" % (wm, clean)
+assert "WM" not in wm, "watermark text leaked into the cast: %r" % wm
+assert any("watermark" in w.lower() for w in warns), "no never-silent watermark warning emitted"
+PY
+check_one out/fixture_wm.pdf out/fixture_wm.out.pdf "watermark: geometry parity" "$RENDER_DIR/fixture_wm"
+
 # multi-episode day-side: the running header varies per page (only the show
 # name is constant) and its glyph-per-op name straddles the x=70 body edge.
 # Locks the show-name furniture anchor and the reader header label.

@@ -1322,7 +1322,16 @@
             };
           });
         for (const it of items) totalChars += it.str.length;
-        pages.push({ index: p, width: vp.viewBox[2] - vp.viewBox[0], height: vp.viewBox[3] - vp.viewBox[1], lines: buildLines(items) });
+        // Rotated overlay text (per-recipient watermarks, burn-in stamps) is
+        // not part of the horizontal screenplay layout. Exclude it from
+        // line-building so a rotated glyph that shares a cue's baseline can't
+        // add a left segment / shift x0 and knock the cue out of its band,
+        // dropping the character SILENTLY (no reject rail) — the burn-in
+        // silent-loss class, scriptparse #37. Reader mode already drops
+        // item.rot; the classifier now does too. The rewriter still sees the
+        // raw stream, so the watermark bytes stay byte-identical in the output.
+        const bodyItems = items.filter(it => !it.rot);
+        pages.push({ index: p, width: vp.viewBox[2] - vp.viewBox[0], height: vp.viewBox[3] - vp.viewBox[1], lines: buildLines(bodyItems), rotatedItems: items.length - bodyItems.length });
       }
       await doc.destroy();
       return { pages, totalChars };
@@ -1520,6 +1529,13 @@
       const anchorC = cal.dialX + colW / 2; // uniform-scale anchor (see pageScale)
       report.characters = collectCharacters(pages);
       report.sluglines = collectSluglines(pages); // for .sceneline draft-mismatch subset check
+      // Never-silent: if rotated watermark/burn-in text was present, say so.
+      // The guard above recovers cues the watermark would have hidden, but a
+      // NON-rotated stamp (repeated-position burn-in) is not caught here — that
+      // strip is scriptparse policy data and arrives with package adoption — so
+      // flag it rather than let a missing character pass unremarked (#37).
+      const rotRuns = pages.reduce((n, P) => n + (P.rotatedItems || 0), 0);
+      if (rotRuns) report.warnings.push('Rotated watermark/burn-in text detected (' + rotRuns + ' run' + (rotRuns === 1 ? '' : 's') + ') and excluded from character detection, so cues beneath it are still found. If a character still looks missing, the copy may carry a non-rotated stamp watermark — double-check the character list against the script.');
       // the character name grows with its block: a block's cue is eligible
       // whenever the block has eligible dialogue (a bare cue-shaped label
       // with no dialogue under it never scales)
