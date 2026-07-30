@@ -276,11 +276,28 @@ rules that most often apply here:
 
 - Parse/identity/interchange divergences are NEVER fixed locally. File a
   federation motion in scriptparse (issue template) with evidence, affected
-  benches, and a proposed disposition; mention @claude to open litigation.
+  benches, and a proposed disposition. Filing is enough: the hub steward's
+  standing sweep litigates (mentions are inert since the 2026-07-27 routing
+  ruling, scriptparse #28).
+- **Pin-lag doctrine (RULED, Peter, 2026-07-30; scriptparse #37):** lagging
+  the hub pin stays this bench's right for behavior changes. It does NOT
+  cover correctness classes: when a release is flagged as fixing a
+  correctness class and this bench loads NEW material that matches it, the
+  bump comes first. Load-time tells for the burn-in class: unexplained
+  scene-id gaps, or repeated single-glyph tokens across pages; either one
+  means suspect burn-in, bump before trusting the parse.
 - Evidence in motions: fixtures by name + checksum, diffs, numbers. Never
   script text or real production strings.
-- When a hub sync PR or federation issue arrives here: absorb it per this
-  repo's own requirements docs, run this repo's gates, and comment the ack
+- When a hub sync PR or federation issue arrives here (relayed by a cloud
+  routine — the hub's Actions agent has no cross-repo token): absorb it per
+  this repo's own requirements docs, run this repo's gates, and comment the ack
   (or the objection) on the hub issue. Pin bumps are boring on purpose.
+- **Verification is inverted (ruled 2026-07-26): this bench reports, the hub
+  reconciles.** When the hub publishes a checksum for a shared file (spec copy,
+  policy data, pin), verify THIS repo's copy and post its `sha256` on the hub
+  issue. Nobody reads into another bench's tree, so a missing report reads as
+  unverified, not as clean. On Windows, post both the raw `sha256` and
+  `tr -d '\r' < file | sha256sum` — a difference between them is a
+  `core.autocrlf` artifact, not drift.
 - Escalation is the hub's job: if litigation goes novel, the hub labels
   needs-peter. Don't ping Peter directly from here for federation matters.
