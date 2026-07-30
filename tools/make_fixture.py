@@ -230,6 +230,11 @@ PAGES = [
 # from x=40 so it straddles the body's x=70 boundary, exactly like real
 # distributed sides (a left-clipping bug eats "PROC" and leaves "EDURAL").
 OUT_MULTI = os.path.join(os.path.dirname(__file__), "..", "out", "fixture_multi.pdf")
+OUT_WM = os.path.join(os.path.dirname(__file__), "..", "out", "fixture_wm.pdf")
+# Watermark every cue EXCEPT the leads, so calibration still succeeds on the
+# clean lead cues and the minor characters vanish SILENTLY (the #37 partial
+# loss), rather than tripping the "no cues found" fallback.
+WM_KEEP_CLEAN = {"LAURA", "MORROW"}
 MULTI_SHOW = "PROCEDURAL"
 # (episode, title, draft, date, printed page number)
 MULTI_HEAD = [
@@ -294,82 +299,130 @@ def make_multi(path):
     print("wrote", os.path.abspath(path), "pages:", len(MULTI_HEAD))
 
 
-def main():
-    os.makedirs(os.path.dirname(OUT), exist_ok=True)
-    c = canvas.Canvas(OUT, pagesize=letter)
+def _wm_glyph(c, y, drift):
+    """One rotated watermark glyph on a text baseline, left of the cue column.
+    Models the burn-in silent-drop condition (scriptparse #37): a rot item that
+    shares a cue's baseline adds a left segment (or shifts x0), so the cue fails
+    geometric detection unless rotated items are excluded from line-building
+    (which is exactly what the guard does)."""
+    c.saveState()
+    try:
+        c.setFillGray(0.55, 0.55)
+    except TypeError:
+        c.setFillGray(0.55)
+    c.translate(X_ACTION + drift, y)
+    c.rotate(45)
+    c.setFont(FONT, 14)
+    c.drawString(0, 0, "WM")
+    c.restoreState()
+    c.setFont(FONT, SIZE)
+
+
+def _draw_page(c, pi, page, watermark=False):
+    drift = (pi * 3) - 4 if pi < 6 else 2  # photocopy drift, mild on 7-8
+    c.setFont(FONT, SIZE)
+    y = H - 54  # ~0.75" top margin
+    # page number top-right
+    c.drawString(W - 90 + drift, y, "%d." % (pi + 34))
+    for tok in page:
+        kind = tok[0]
+        if kind == "blank":
+            y -= LEAD
+            continue
+        if kind == "head":
+            c.drawString(X_ACTION + drift, y, tok[1])
+            y -= LEAD
+            continue
+        if kind == "dual_cues":
+            c.drawString(150 + drift, y, tok[1])
+            c.drawString(330 + drift, y, tok[2])
+            y -= LEAD
+            continue
+        if kind == "dual":
+            c.drawString(115 + drift, y, tok[1])
+            c.drawString(295 + drift, y, tok[2])
+            y -= LEAD
+            continue
+        if kind == "worddial":
+            # each word its own text-show op at an absolute x (the layout
+            # real production PDFs use); exercises multi-run kerning
+            x = X_DIAL + drift
+            for word in tok[1].split(" "):
+                c.drawString(x, y, word)
+                x += (len(word) + 1) * 7.2  # Courier 12: 7.2pt/char
+            y -= LEAD
+            continue
+        if kind == "sharedform":
+            c.doForm("SharedNote")
+            continue
+        if kind == "clipcell":
+            c.saveState()
+            p = c.beginPath()
+            p.rect(X_ACTION + drift - 2, y - 3, 132, 15)
+            c.clipPath(p, stroke=0, fill=0)
+            c.drawString(X_ACTION + drift, y, tok[1])
+            c.restoreState()
+            y -= LEAD
+            continue
+        if kind == "stardial":
+            # dialogue line with a revision star out in the right margin
+            c.drawString(X_DIAL + drift, y, tok[1])
+            c.drawString(W - 40 + drift, y, "*")
+            y -= LEAD
+            continue
+        if kind == "starcue":
+            # character cue with a revision star ("TRACY  *"): must still
+            # read as a cue, and the star must never scale
+            c.drawString(X_CUE + drift, y, tok[1])
+            c.drawString(W - 40 + drift, y, "*")
+            if watermark and tok[1].split("(")[0].strip().upper() not in WM_KEEP_CLEAN:
+                _wm_glyph(c, y, drift)
+            y -= LEAD
+            continue
+        x = {"slug": X_ACTION, "action": X_ACTION, "cue": X_CUE,
+             "dial": X_DIAL, "paren": X_PAREN, "more": X_DIAL,
+             "trans": X_TRANS, "trapcue": X_CUE}[kind]
+        c.drawString(x + drift, y, tok[1])
+        if (watermark and kind in ("cue", "trapcue")
+                and tok[1].split("(")[0].strip().upper() not in WM_KEEP_CLEAN):
+            _wm_glyph(c, y, drift)
+        y -= LEAD
+
+
+def _new_canvas(path):
+    c = canvas.Canvas(path, pagesize=letter)
     # a form XObject shared by pages 7-8 (multi-use container with text)
     c.beginForm("SharedNote")
     c.setFont(FONT, SIZE)
     c.drawString(X_ACTION, 320, "PROPERTY OF PRODUCTION - DO NOT DUPLICATE")
     c.endForm()
+    return c
+
+
+def make_watermarked(path):
+    """Same screenplay as the clean fixture, with a rotated watermark glyph on
+    every character-cue baseline. Without the rotated-item guard the cues fail
+    geometric detection and their characters vanish silently (there is no reject
+    rail); with the guard the full cast is recovered. Locks scriptparse #37 for
+    this bench."""
+    c = _new_canvas(path)
     for pi, page in enumerate(PAGES):
-        drift = (pi * 3) - 4 if pi < 6 else 2  # photocopy drift, mild on 7-8
-        c.setFont(FONT, SIZE)
-        y = H - 54  # ~0.75" top margin
-        # page number top-right
-        c.drawString(W - 90 + drift, y, "%d." % (pi + 34))
-        for tok in page:
-            kind = tok[0]
-            if kind == "blank":
-                y -= LEAD
-                continue
-            if kind == "head":
-                c.drawString(X_ACTION + drift, y, tok[1])
-                y -= LEAD
-                continue
-            if kind == "dual_cues":
-                c.drawString(150 + drift, y, tok[1])
-                c.drawString(330 + drift, y, tok[2])
-                y -= LEAD
-                continue
-            if kind == "dual":
-                c.drawString(115 + drift, y, tok[1])
-                c.drawString(295 + drift, y, tok[2])
-                y -= LEAD
-                continue
-            if kind == "worddial":
-                # each word its own text-show op at an absolute x (the layout
-                # real production PDFs use); exercises multi-run kerning
-                x = X_DIAL + drift
-                for word in tok[1].split(" "):
-                    c.drawString(x, y, word)
-                    x += (len(word) + 1) * 7.2  # Courier 12: 7.2pt/char
-                y -= LEAD
-                continue
-            if kind == "sharedform":
-                c.doForm("SharedNote")
-                continue
-            if kind == "clipcell":
-                c.saveState()
-                p = c.beginPath()
-                p.rect(X_ACTION + drift - 2, y - 3, 132, 15)
-                c.clipPath(p, stroke=0, fill=0)
-                c.drawString(X_ACTION + drift, y, tok[1])
-                c.restoreState()
-                y -= LEAD
-                continue
-            if kind == "stardial":
-                # dialogue line with a revision star out in the right margin
-                c.drawString(X_DIAL + drift, y, tok[1])
-                c.drawString(W - 40 + drift, y, "*")
-                y -= LEAD
-                continue
-            if kind == "starcue":
-                # character cue with a revision star ("TRACY  *"): must still
-                # read as a cue, and the star must never scale
-                c.drawString(X_CUE + drift, y, tok[1])
-                c.drawString(W - 40 + drift, y, "*")
-                y -= LEAD
-                continue
-            x = {"slug": X_ACTION, "action": X_ACTION, "cue": X_CUE,
-                 "dial": X_DIAL, "paren": X_PAREN, "more": X_DIAL,
-                 "trans": X_TRANS, "trapcue": X_CUE}[kind]
-            c.drawString(x + drift, y, tok[1])
-            y -= LEAD
+        _draw_page(c, pi, page, watermark=True)
+        c.showPage()
+    c.save()
+    print("wrote", os.path.abspath(path), "(watermarked) pages:", len(PAGES))
+
+
+def main():
+    os.makedirs(os.path.dirname(OUT), exist_ok=True)
+    c = _new_canvas(OUT)
+    for pi, page in enumerate(PAGES):
+        _draw_page(c, pi, page)
         c.showPage()
     c.save()
     print("wrote", os.path.abspath(OUT), "pages:", len(PAGES))
     make_multi(OUT_MULTI)
+    make_watermarked(OUT_WM)
 
 if __name__ == "__main__":
     main()

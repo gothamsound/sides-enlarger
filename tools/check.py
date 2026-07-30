@@ -43,6 +43,12 @@ def get_lines(page):
         if blk["type"] != 0:
             continue
         for ln in blk["lines"]:
+            # mirror the engine's item.rot exclusion: rotated overlay text
+            # (watermarks / burn-in stamps) is not part of the horizontal
+            # layout and must not enter line-building (scriptparse #37).
+            d = ln.get("dir", (1, 0))
+            if abs(d[1]) > 0.02:
+                continue
             for sp in ln["spans"]:
                 t = sp["text"]
                 if not t.strip():
@@ -82,6 +88,26 @@ def get_lines(page):
         L["segs"] = segs
         L["text"] = "   ".join(s["text"] for s in segs)
     return lines
+
+
+def rot_boxes(page):
+    """bboxes of rotated text lines (watermark / burn-in overlays). The engine
+    excludes item.rot from the classifier; the word-level checks below mirror
+    that by ignoring words that sit inside one of these boxes (scriptparse #37)."""
+    boxes = []
+    for blk in page.get_text("dict")["blocks"]:
+        if blk.get("type") != 0:
+            continue
+        for ln in blk["lines"]:
+            if abs(ln["dir"][1]) > 0.02:
+                boxes.append(ln["bbox"])
+    return boxes
+
+
+def not_rotated(w, boxes):
+    cx, cy = (w[0] + w[2]) / 2.0, (w[1] + w[3]) / 2.0
+    return not any(bx[0] - 0.5 <= cx <= bx[2] + 0.5 and bx[1] - 0.5 <= cy <= bx[3] + 0.5
+                   for bx in boxes)
 
 
 def capsy(t):
@@ -479,14 +505,15 @@ def main():
         if applied is not None and applied > 1.001:
             bwords = b[pi].get_text("words")
             awords = a[pi].get_text("words")
+            brot, arot = rot_boxes(b[pi]), rot_boxes(a[pi])
             for L in blines:
                 if mode == "page":
                     if L.get("cls") != "dialogue":
                         continue
                 elif not line_enlarged(L):
                     continue
-                bw = sorted(w for w in bwords if abs(w[3] - L["y"]) <= 5.0 and w[0] < marginStart)
-                aw = sorted(w for w in awords if abs(w[3] - L["y"]) <= 5.0 and w[0] < marginStart)
+                bw = sorted(w for w in bwords if abs(w[3] - L["y"]) <= 5.0 and w[0] < marginStart and not_rotated(w, brot))
+                aw = sorted(w for w in awords if abs(w[3] - L["y"]) <= 5.0 and w[0] < marginStart and not_rotated(w, arot))
                 if len(bw) < 2:
                     continue
                 if len(aw) != len(bw):
