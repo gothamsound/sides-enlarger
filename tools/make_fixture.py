@@ -219,6 +219,39 @@ PAGES = [
         ("blank",),
         ("action", "NO CREW PARKING ON SET--"),
     ],
+    # page 10 — a GREY-SHADED (omitted / not-shooting) block: real sides grey
+    # out the scenes not being shot. Text under the grey band is context, not
+    # the day's work: it must not enlarge, must not contribute characters
+    # (WALLACE exists ONLY here), and reader mode must drop it. Live content
+    # around it behaves normally.
+    [
+        ("head", "EPISODE 407 - \"NIGHT WORK\""),
+        ("blank",), ("blank",),
+        ("slug", "INT. RECORDS ROOM - NIGHT"),
+        ("blank",),
+        ("action", "Laura pulls a dusty box from the shelf."),
+        ("blank",),
+        ("cue", "LAURA"),
+        ("dial", "Sign here. Both copies."),
+        ("blank",),
+        ("greybox", 8),
+        ("slug", "INT. EVIDENCE CAGE - NIGHT"),
+        ("blank",),
+        ("action", "Wallace waits at the wire window."),
+        ("blank",),
+        ("cue", "WALLACE"),
+        ("dial", "You can't take the originals."),
+        ("dial", "Chain of custody, detective."),
+        ("blank",),
+        ("blank",),
+        ("cue", "MORROW"),
+        ("dial", "Then make me copies."),
+        ("blank",), ("blank",),
+        # a NON-rotated per-recipient stamp: geometry cannot tell it from body
+        # text, so it is only excluded when the user declares it
+        # (opts.watermarkText). Locks the declared-watermark plumbing.
+        ("stamp", "COPY OF JANE DOE"),
+    ],
 ]
 
 # ---------------------------------------------------------------- fixture 2
@@ -363,6 +396,25 @@ def _draw_page(c, pi, page, watermark=False):
             c.drawString(X_ACTION + drift, y, tok[1])
             c.restoreState()
             y -= LEAD
+            continue
+        if kind == "stamp":
+            # horizontal light-grey stamp text (not a filled rect, not rotated)
+            c.saveState()
+            c.setFillGray(0.6)
+            c.drawString(150 + drift, y, tok[1])
+            c.restoreState()
+            y -= LEAD
+            continue
+        if kind == "greybox":
+            # grey shade behind the NEXT n lines (drawn first = behind the
+            # text, like real omitted-scene shading); consumes no vertical
+            # space itself. 0.75 grey matches real packets.
+            n = tok[1]
+            c.saveState()
+            c.setFillGray(0.75)
+            c.rect(X_ACTION - 10 + drift, y - (n - 1) * LEAD - 4,
+                   W - 72 - (X_ACTION - 10), (n - 1) * LEAD + 13, stroke=0, fill=1)
+            c.restoreState()
             continue
         if kind == "stardial":
             # dialogue line with a revision star out in the right margin

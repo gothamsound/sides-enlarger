@@ -58,6 +58,11 @@ python3 - <<'PY' && echo "    [extraction] PASS" || { echo "    [extraction] FAI
 import json, sys
 rep = json.load(open("out/fixture.1.25.pdf.report.json"))
 names = sorted(c["name"] for c in rep.get("characters", []))
+# WALLACE speaks only inside the grey-shaded (omitted) block on page 10 and
+# must NOT be extracted; the grey exclusion must also announce itself.
+assert "WALLACE" not in names, "grey-shaded character leaked into the list"
+assert any("grey" in w.lower() for w in rep.get("warnings", [])), \
+    "no grey-region warning emitted"
 expected = sorted(["LAURA", "MORROW", "WITNESS", "DIAZ",
                    "ELEANOR FROM HR", "SAM", "MERC #1"])
 if names != expected:
@@ -122,6 +127,28 @@ assert "WM" not in wm, "watermark text leaked into the cast: %r" % wm
 assert any("watermark" in w.lower() for w in warns), "no never-silent watermark warning emitted"
 PY
 check_one out/fixture_wm.pdf out/fixture_wm.out.pdf "watermark: geometry parity" "$RENDER_DIR/fixture_wm"
+
+# declared watermark text (opts.watermarkText): the page-10 stamp "COPY OF
+# JANE DOE" is horizontal, so only the user's declaration can exclude it.
+# Geometry parity must hold (stamp bytes untouched), the match must announce
+# itself, and a mistyped declaration must warn instead of silently no-opping.
+echo "==> fixture: declared watermark text"
+node tools/run_engine_node.mjs out/fixture.pdf out/fixture.wmtext.pdf 1.25 --watermark-text='COPY OF JANE DOE' \
+  >/dev/null 2>out/fixture.wmtext.err || { echo "    [wm-text] ENGINE ERROR:"; cat out/fixture.wmtext.err; fail=1; }
+python3 - <<'PY' && echo "    [wm-text: matched + announced] PASS" || { echo "    [wm-text] FAIL"; fail=1; }
+import json
+rep = json.load(open("out/fixture.wmtext.pdf.report.json"))
+w = rep.get("warnings", [])
+assert any("Watermark text matched" in x for x in w), "match warning missing: %r" % w
+PY
+check_one out/fixture.pdf out/fixture.wmtext.pdf "wm-text: geometry parity" "$RENDER_DIR/fixture_wmtext"
+node tools/run_engine_node.mjs out/fixture.pdf out/fixture.wmmiss.pdf 1.25 --watermark-text='NOT ON ANY PAGE' \
+  >/dev/null 2>/dev/null
+python3 - <<'PY' && echo "    [wm-text: miss warns] PASS" || { echo "    [wm-text: miss warns] FAIL"; fail=1; }
+import json
+rep = json.load(open("out/fixture.wmmiss.pdf.report.json"))
+assert any("did not match" in x for x in rep.get("warnings", [])), "no-match warning missing"
+PY
 
 # multi-episode day-side: the running header varies per page (only the show
 # name is constant) and its glyph-per-op name straddles the x=70 body edge.
