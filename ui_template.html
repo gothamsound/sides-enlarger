@@ -253,27 +253,18 @@
     &middot; free software, provided as is with no warranty &middot; &copy; 2026 Gotham Sound and Communications, Inc.</footer>
 </main>
 
-<script>/*__PDFJS__*/</script>
+<script>window.__PDFJS_B64__ = "/*__PDFJS_B64__*/";</script>
 <script>window.__PDFWORKER_B64__ = "/*__PDFWORKER_B64__*/";</script>
 <script>/*__PDFLIB__*/</script>
 <script>/*__ENGINE__*/</script>
 <script>
-(function () {
+// pdf.js v5 is ESM-only. The classic script below defines the whole app as
+// window.__bootSides__; the module script at the end of the page (modules
+// always run after classic scripts) reconstitutes pdf.js from embedded
+// base64, imports it from a local blob: URL — fully offline, allowed by the
+// CSP's `script-src blob:` — and then boots the app.
+window.__bootSides__ = function (pdfjs) {
   'use strict';
-  var pdfjs = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
-  // Reconstitute the pdf.js worker from embedded base64 into a Blob URL and run
-  // it as a real Web Worker — fully offline, no network, deterministic.
-  try {
-    var wbin = atob(window.__PDFWORKER_B64__);
-    var wbytes = new Uint8Array(wbin.length);
-    for (var wi = 0; wi < wbin.length; wi++) wbytes[wi] = wbin.charCodeAt(wi);
-    var wurl = URL.createObjectURL(new Blob([wbytes], { type: 'text/javascript' }));
-    pdfjs.GlobalWorkerOptions.workerSrc = wurl;
-  } catch (e) {
-    // last-resort: fake worker via the global message handler if present
-    pdfjs.GlobalWorkerOptions.workerSrc = '';
-  }
-
   var engine = createSidesEngine({ pdfjsLib: pdfjs, PDFLib: window.PDFLib });
   var PALETTE = engine.PALETTE;
 
@@ -953,7 +944,55 @@
     a.click();
     a.remove();
   });
+};
+</script>
+<script>
+/* ES5 browser-floor preflight. The bundled pdf.js is the `legacy` build,
+   core-js-polyfilled down to ~Safari/iOS 15.4; below that floor it cannot run.
+   Detect below-floor browsers with three checks that all landed in Safari 15.4
+   and show a plain message, instead of letting the module boot throw a cryptic
+   error mid-parse. This script must itself stay ES5: no arrow functions, no
+   const/let, no template strings. (Reason for the legacy build: the modern
+   build calls Promise.withResolvers [iOS 17.4] and URL.parse [iOS 18] unguarded
+   on the open path, so it hard-fails every pre-iOS-18 WebKit browser.) */
+(function () {
+  var ok = typeof structuredClone === 'function' &&
+           typeof Object.hasOwn === 'function' &&
+           !!(Array.prototype && Array.prototype.at);
+  if (ok) return;
+  window.__belowFloor__ = true;
+  try {
+    var main = document.getElementsByTagName('main')[0];
+    if (main) main.style.display = 'none';
+    var d = document.createElement('div');
+    d.setAttribute('role', 'alert');
+    d.style.cssText = 'max-width:40em;margin:3em auto;padding:1.5em 1.25em;background:#fff;border-radius:8px;font:16px/1.55 system-ui,-apple-system,sans-serif;color:#111';
+    d.innerHTML = '<h1 style="font-size:1.3em;margin:0 0 .5em">Please update your device</h1>' +
+      '<p>Sides Enlarger needs a newer browser than this one. On iPhone or iPad, update to <b>iOS 15.4 or later</b> (Settings &rsaquo; General &rsaquo; Software Update), then reopen this page.</p>' +
+      '<p style="color:#555">Everything still runs privately on your device: nothing is ever uploaded.</p>';
+    document.body.insertBefore(d, document.body.firstChild);
+  } catch (e) {}
 })();
+</script>
+<script type="module">
+const b64ToBlobUrl = (b64) => {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return URL.createObjectURL(new Blob([bytes], { type: 'text/javascript' }));
+};
+// A below-floor browser (flagged by the ES5 preflight above) already shows a
+// plain "update your device" message; don't attempt the pdf.js import there.
+if (!window.__belowFloor__) try {
+  const pdfjs = await import(b64ToBlobUrl(window.__PDFJS_B64__));
+  // the worker is a module worker in v5; pdf.js loads it itself from this URL
+  pdfjs.GlobalWorkerOptions.workerSrc = b64ToBlobUrl(window.__PDFWORKER_B64__);
+  window.__bootSides__(pdfjs);
+} catch (e) {
+  document.getElementById('status').textContent =
+    'Could not start the PDF engine. (' + ((e && e.message) || e) + ')';
+  document.getElementById('status').className = 'err';
+}
 </script>
 </body>
 </html>

@@ -10,12 +10,21 @@ import { deepStrictEqual } from 'assert';
 import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const require = createRequire(import.meta.url);
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PDFLib = require(path.join(root, 'node_modules/pdf-lib/dist/pdf-lib.js'));
-const pdfjsLib = require(path.join(root, 'node_modules/pdfjs-dist/legacy/build/pdf.js'));
+// pdfjs-dist 3.x ships a CJS legacy build (pdf.js); 4+/5.x is ESM-only
+// (pdf.mjs, needs a DOMMatrix stand-in at import time). Support both so this
+// test runs on either pin.
+const pdfCjs = path.join(root, 'node_modules/pdfjs-dist/legacy/build/pdf.js');
+if (typeof globalThis.DOMMatrix === 'undefined') {
+  globalThis.DOMMatrix = class { constructor(){ this.a=1;this.b=0;this.c=0;this.d=1;this.e=0;this.f=0; } };
+}
+const pdfjsLib = fs.existsSync(pdfCjs)
+  ? require(pdfCjs)
+  : await import(pathToFileURL(path.join(root, 'node_modules/pdfjs-dist/legacy/build/pdf.mjs')).href);
 const createSidesEngine = require(path.join(root, 'engine.js'));
 const engine = createSidesEngine({ pdfjsLib, PDFLib });
 

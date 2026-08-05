@@ -1130,6 +1130,14 @@
       for (const L of P.lines) {
         if (L.furn) continue;
         let live = L.items.filter(t => !t.rot && !/^\*+$/.test(t.str.trim()));
+        // pdf.js v5 merges a trailing right-margin revision star into the
+        // dialogue text item (v3 emitted it separately, dropped by the filter
+        // above). The margin gap becomes a space, so a trailing " *" is a
+        // revision mark, not content (dialogue never ends that way); strip it
+        // so it can't bleed into the reflowed text.
+        live = live.map(t => /\s\*+\s*$/.test(t.str)
+          ? Object.assign({}, t, { str: t.str.replace(/\s+\*+\s*$/, '') })
+          : t).filter(t => t.str.trim());
         // Scene number prints identically in BOTH margins of a scene/shot
         // heading. The left copy is always separated from the body column by
         // a wide gap (far bigger than a word space, so this is drift-proof);
@@ -1300,6 +1308,36 @@
   return function createSidesEngine({ pdfjsLib, PDFLib }) {
 
     async function extract(bytes) {
+      // pdf.js 4.2+/5.x iterates its text-content ReadableStream with `for await`.
+      // WebKit only shipped ReadableStream async iteration in Safari 26, so every
+      // iPhone on Safari 15.4-18.x throws at the FIRST getTextContent (scriptparse
+      // #43, cliff 2). core-js does not patch web streams (the legacy build sails
+      // through) and Node has been async-iterable since 16, so this is invisible to
+      // both the legacy polyfills and Node smoke tests. Install the standard
+      // MDN-shape asyncIterator on the main thread before any getTextContent.
+      // Feature-detected and idempotent: a no-op on Safari 26+ and on Node.
+      if (typeof ReadableStream !== 'undefined' && !ReadableStream.prototype[Symbol.asyncIterator]) {
+        const values = function ({ preventCancel = false } = {}) {
+          const reader = this.getReader();
+          return {
+            async next() {
+              try {
+                const r = await reader.read();
+                if (r.done) reader.releaseLock();
+                return r;
+              } catch (e) { reader.releaseLock(); throw e; }
+            },
+            async return(value) {
+              if (!preventCancel) { const c = reader.cancel(value); reader.releaseLock(); await c; }
+              else { reader.releaseLock(); }
+              return { done: true, value };
+            },
+            [Symbol.asyncIterator]() { return this; },
+          };
+        };
+        if (!ReadableStream.prototype.values) ReadableStream.prototype.values = values;
+        ReadableStream.prototype[Symbol.asyncIterator] = ReadableStream.prototype.values;
+      }
       const task = pdfjsLib.getDocument({
         data: bytes.slice(), useSystemFonts: true, isEvalSupported: false, disableFontFace: true,
       });
