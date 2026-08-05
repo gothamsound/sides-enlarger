@@ -1681,15 +1681,16 @@
         }
       } catch (e) { /* grey detection is best-effort; classification proceeds on all text */ }
 
-      // Optional user-declared watermark text (opts.watermarkText): the
-      // interim answer for NON-rotated stamps, which geometry can't tell from
-      // body text (the rotated class is handled automatically above; the full
-      // repeated-position strip is scriptparse policy data and arrives with
-      // package adoption). This is user-directed exclusion of an exact string,
-      // NOT content-based classification: the geometric-detection law stands.
-      // Matches whole items and whole gap-joined segments (covers word-per-op
-      // and glyph-per-op stamps); matched text is excluded from classification
-      // but its bytes stay untouched.
+      // Optional declared watermark text (opts.watermarkText): HEADLESS-ONLY
+      // seam, no UI (the field was removed in v1.9.2 as speculative — exact
+      // matching misses the merged-into-a-body-segment case where a
+      // non-rotated stamp does real damage, and the harmless own-line case
+      // needs no exclusion). Kept for tools/debugging and as the hook a
+      // .sceneline burn_ins rail can feed programmatically once the policy
+      // strip lands with package adoption; rotated stamps are automatic
+      // (above). Declared exclusion of an exact string, NOT content-based
+      // classification: the geometric-detection law stands. Matches whole
+      // items and whole gap-joined segments; bytes stay untouched.
       const normWm = s => String(s || '').replace(/\s+/g, ' ').trim().toUpperCase();
       const wmSet = new Set([].concat(opts.watermarkText || []).map(normWm).filter(Boolean));
       let wmRuns = 0, wmPages = 0;

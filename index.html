@@ -62,9 +62,6 @@
               cursor:pointer; padding:2px 4px; }
   .chRemove:hover { color:var(--err); }
   input[type=range] { flex:1; min-width:200px; accent-color: var(--accent); height:34px; }
-  #wmRow input[type=text] { flex:1; min-width:220px; padding:8px 10px; border:1px solid var(--line);
-    border-radius:8px; background:var(--panel); color:inherit; font:inherit; }
-  #wmRow .wmOpt { font-weight:400; opacity:.65; }
   #scaleVal { font-family:"Courier New",monospace; font-size:20px; font-weight:700; width:70px; }
   #download { display:none; width:100%; padding:18px; font-size:21px; font-weight:700; color:#fff;
               background:var(--accent); border:0; border-radius:12px; cursor:pointer; margin:14px 0 6px; }
@@ -195,12 +192,6 @@
     </div>
   </div>
 
-  <div class="controls" id="wmRow">
-    <label for="wmText">Watermark text <span class="wmOpt">(optional)</span></label>
-    <input type="text" id="wmText" autocomplete="off" spellcheck="false"
-           placeholder="text stamped across each page, e.g. a name"
-           title="For maximum readability: if your copy is stamped with a watermark, enter its text exactly (separate several with |). It is then ignored when finding characters and sizing dialogue. The watermark itself stays on the page. Loading a .sceneline show file fills this in automatically when the file records the watermark.">
-  </div>
 
   <div id="status"></div>
   <ul id="warnings"></ul>
@@ -247,7 +238,7 @@
          target="_blank" rel="noopener noreferrer">Report an issue or request a feature</a></p>
   </section>
 
-  <footer>Sides Enlarger v1.9.1 &middot; Everything runs in your browser: no uploads, no accounts, no tracking.<br>
+  <footer>Sides Enlarger v1.9.2 &middot; Everything runs in your browser: no uploads, no accounts, no tracking.<br>
     <a href="https://github.com/gothamsound/sides-enlarger/blob/main/README.md#run-it-offline-keep-your-own-copy" target="_blank" rel="noopener noreferrer">How to download this page and run it offline</a><br>
     <a href="https://github.com/gothamsound/sides-enlarger/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT License</a>
     &middot; free software, provided as is with no warranty &middot; &copy; 2026 Gotham Sound and Communications, Inc.</footer>
@@ -1955,15 +1946,16 @@
         }
       } catch (e) { /* grey detection is best-effort; classification proceeds on all text */ }
 
-      // Optional user-declared watermark text (opts.watermarkText): the
-      // interim answer for NON-rotated stamps, which geometry can't tell from
-      // body text (the rotated class is handled automatically above; the full
-      // repeated-position strip is scriptparse policy data and arrives with
-      // package adoption). This is user-directed exclusion of an exact string,
-      // NOT content-based classification: the geometric-detection law stands.
-      // Matches whole items and whole gap-joined segments (covers word-per-op
-      // and glyph-per-op stamps); matched text is excluded from classification
-      // but its bytes stay untouched.
+      // Optional declared watermark text (opts.watermarkText): HEADLESS-ONLY
+      // seam, no UI (the field was removed in v1.9.2 as speculative — exact
+      // matching misses the merged-into-a-body-segment case where a
+      // non-rotated stamp does real damage, and the harmless own-line case
+      // needs no exclusion). Kept for tools/debugging and as the hook a
+      // .sceneline burn_ins rail can feed programmatically once the policy
+      // strip lands with package adoption; rotated stamps are automatic
+      // (above). Declared exclusion of an exact string, NOT content-based
+      // classification: the geometric-detection law stands. Matches whole
+      // items and whole gap-joined segments; bytes stay untouched.
       const normWm = s => String(s || '').replace(/\s+/g, ' ').trim().toUpperCase();
       const wmSet = new Set([].concat(opts.watermarkText || []).map(normWm).filter(Boolean));
       let wmRuns = 0, wmPages = 0;
@@ -2556,7 +2548,6 @@ window.__bootSides__ = function (pdfjs) {
   var drop = document.getElementById('drop');
   var fileInput = document.getElementById('file');
   var slider = document.getElementById('scale');
-  var wmInput = document.getElementById('wmText');
   var scaleVal = document.getElementById('scaleVal');
   var status = document.getElementById('status');
   var warnUl = document.getElementById('warnings');
@@ -2576,7 +2567,7 @@ window.__bootSides__ = function (pdfjs) {
   var exportRow = document.getElementById('exportRow');
   var exportBtn = document.getElementById('exportBtn');
   var exportFullBtn = document.getElementById('exportFullBtn');
-  var APP_VERSION = '1.9.1';
+  var APP_VERSION = '1.9.2';
 
   var prefs = loadPrefs();
   if (prefs.scale >= 1 && prefs.scale <= 1.5) slider.value = prefs.scale;
@@ -2940,24 +2931,6 @@ window.__bootSides__ = function (pdfjs) {
       catch (e) { setStatus(e && e.message ? e.message : 'Could not read that .sceneline file.', true); return; }
       loadedShows = loadedShows.filter(function (s) { return s.name !== file.name; });
       loadedShows.push({ name: file.name, parsed: parsed });
-      // spec §2 rule 7: the show file may record the stamped watermark text
-      // (show.burn_ins). Prefill the watermark field from it, never overwrite
-      // something the user already typed.
-      if (!wmInput.value.trim()) {
-        var burnTexts = [];
-        loadedShows.forEach(function (s) {
-          var bi = s.parsed && s.parsed.show && s.parsed.show.burn_ins;
-          (Array.isArray(bi) ? bi : []).forEach(function (b) {
-            var t = b && typeof b.text === 'string' ? b.text.trim() : '';
-            if (t && burnTexts.indexOf(t) === -1) burnTexts.push(t);
-          });
-        });
-        if (burnTexts.length) {
-          wmInput.value = burnTexts.join(' | ');
-          setStatus('Watermark text filled in from the show file (' + burnTexts.length + ' entr' + (burnTexts.length === 1 ? 'y' : 'ies') + '); it will be ignored during character detection.');
-          scheduleProcess();
-        }
-      }
       (parsed.warnings || []).forEach(function (w) {
         var li = document.createElement('li'); li.textContent = file.name + ': ' + w; warnUl.appendChild(li);
       });
@@ -3056,9 +3029,6 @@ window.__bootSides__ = function (pdfjs) {
     // yield to paint before heavy work
     setTimeout(function () {
       var opts = { scale: s, highlights: activeHighlights() };
-      var wmT = (wmInput.value || '').split('|').map(function (t) { return t.trim(); })
-        .filter(function (t) { return t; });
-      if (wmT.length) opts.watermarkText = wmT;
       if (prefs.enlargeMode === 'page') opts.mode = 'page';
       else if (prefs.enlargeMode === 'reader') opts.mode = 'reader';
       else if (prefs.enlargeMode === 'selected') {
@@ -3181,9 +3151,6 @@ window.__bootSides__ = function (pdfjs) {
     savePrefs(prefs);
     scheduleProcess();
   });
-
-  // watermark text (per-document, deliberately NOT saved in prefs)
-  wmInput.addEventListener('input', function () { scheduleProcess(); });
 
   // download
   dlBtn.addEventListener('click', function () {
