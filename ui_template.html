@@ -48,10 +48,23 @@
   .segAlt button { color:var(--warn); }
   .segAlt button.on { color:#fff; }
   @media (max-width:600px){ .seg button { padding:9px 9px; font-size:13px; } .segAlt { margin-left:0; } }
-  .aa { border:1.5px solid #ccc; background:#fff; color:#999; border-radius:8px; font-size:13px;
-        font-weight:700; padding:4px 8px; cursor:pointer; line-height:1; }
-  .aa.on { border-color:var(--accent); background:var(--accent); color:#fff; }
+  /* "Selected characters" mode: pick who to enlarge */
+  .railInstruct { font-size:14px; font-weight:600; color:var(--accent); background:var(--accentSoft);
+                  border-radius:8px; padding:9px 11px; margin:0 0 8px; }
+  .enlChk { flex:none; width:28px; height:28px; border:2px solid #b7b7b7; border-radius:7px; background:#fff;
+            color:#fff; font-size:17px; font-weight:800; line-height:1; cursor:pointer; padding:0;
+            display:flex; align-items:center; justify-content:center; }
+  .enlChk.on { background:var(--accent); border-color:var(--accent); }
+  .chTop.sel { cursor:pointer; align-items:center; padding:4px; margin:-4px; border-radius:9px; }
+  .chTop.sel:hover { background:#f6f7e8; }
+  .chRow.enl { background:var(--accentSoft); border-radius:9px; }
+  .chRemove { flex:none; border:0; background:none; color:#b0b0b0; font-size:12px; text-decoration:underline;
+              cursor:pointer; padding:2px 4px; }
+  .chRemove:hover { color:var(--err); }
   input[type=range] { flex:1; min-width:200px; accent-color: var(--accent); height:34px; }
+  #wmRow input[type=text] { flex:1; min-width:220px; padding:8px 10px; border:1px solid var(--line);
+    border-radius:8px; background:var(--panel); color:inherit; font:inherit; }
+  #wmRow .wmOpt { font-weight:400; opacity:.65; }
   #scaleVal { font-family:"Courier New",monospace; font-size:20px; font-weight:700; width:70px; }
   #download { display:none; width:100%; padding:18px; font-size:21px; font-weight:700; color:#fff;
               background:var(--accent); border:0; border-radius:12px; cursor:pointer; margin:14px 0 6px; }
@@ -60,6 +73,38 @@
   #status.err { color:var(--err); font-weight:600; }
   ul#warnings { margin:6px 0 0; padding-left:20px; color:var(--warn); font-size:14px; }
   ul#warnings li { margin:2px 0; }
+  .dropAlt { font-size:13px; color:#999; margin-top:8px; }
+  .dropAlt code { background:var(--accentSoft); border-radius:5px; padding:0 5px; font-size:12px; }
+  /* .sceneline import/export */
+  #reconcileBanner { margin:10px 0 0; background:#fff; border:1px solid #e3ded2; border-radius:10px; padding:11px 13px; font-size:13px; }
+  #reconcileBanner[hidden] { display:none; }
+  .rcLine { color:#555; }
+  .rcLine strong { color:#333; }
+  .rcClear { border:0; background:none; color:#aaa; text-decoration:underline; cursor:pointer; font-size:12px; padding:0 0 0 4px; }
+  .rcClear:hover { color:var(--err); }
+  .rcNote { margin-top:7px; color:#777; }
+  .rcWarn { margin-top:9px; padding:9px 11px; background:#fff7ec; border:1px solid #f0d9b5; border-radius:8px; color:var(--warn); }
+  .rcWarn ul { margin:5px 0 6px; padding-left:18px; }
+  .rcWarn li { margin:1px 0; }
+  .rcPick button { margin:2px 6px 0 0; padding:4px 10px; border:1.5px solid var(--warn); background:#fff;
+                   color:var(--warn); border-radius:8px; font-weight:600; font-size:12px; cursor:pointer; }
+  .rcPick button.on { background:var(--warn); color:#fff; }
+  .chip { display:inline-block; border-radius:10px; padding:0 8px; font-size:11px; font-weight:600;
+          margin-left:6px; vertical-align:middle; white-space:nowrap; }
+  .chip.unmatched { background:#fff1e0; color:var(--warn); }
+  .chip.secondary { background:#eee; color:#888; }
+  .railGroup { margin:12px 0 2px; font-size:11px; text-transform:uppercase; letter-spacing:.05em;
+               color:#aaa; border-top:1px solid #ece7dc; padding-top:8px; }
+  .chRow.unmatched { border-left:3px solid #f0c98a; padding-left:8px; }
+  .chRow.secondary .chName { color:#777; }
+  #exportRow { display:flex; gap:10px; align-items:center; margin:4px 0 0; flex-wrap:wrap; }
+  #exportRow[hidden] { display:none; }
+  #exportBtn { padding:11px 16px; font-size:15px; font-weight:700; color:var(--accent); background:#fff;
+               border:1.5px solid var(--accent); border-radius:10px; cursor:pointer; }
+  #exportBtn:hover { background:var(--accentSoft); }
+  #exportFullBtn { padding:9px 12px; font-size:13px; color:#888; background:none; border:0;
+                   text-decoration:underline; cursor:pointer; }
+  #exportFullBtn[hidden] { display:none; }
   .workspace { display:grid; grid-template-columns:minmax(270px,330px) 1fr; gap:18px; align-items:start; margin-top:16px; }
   @media (max-width:900px){ .workspace { display:block; } #charRail { margin-bottom:16px; } }
   #charRail { display:none; background:#fff; border:1px solid #e3ded2; border-radius:12px; padding:14px 14px 16px; }
@@ -71,8 +116,6 @@
   .chTop { display:flex; align-items:baseline; gap:8px; }
   .chName { font-weight:700; font-size:14px; overflow-wrap:anywhere; }
   .chMeta { color:#888; font-size:12px; flex:1; }
-  .chHide { border:0; background:none; color:#bbb; font-size:17px; cursor:pointer; padding:2px 6px; line-height:1; }
-  .chHide:hover { color:var(--err); }
   .swRow { display:flex; gap:7px; margin-top:7px; flex-wrap:wrap; }
   .sw { width:30px; height:30px; border-radius:50%; border:1.5px solid rgba(0,0,0,.15); cursor:pointer;
         font-size:15px; line-height:1; display:flex; align-items:center; justify-content:center; padding:0; }
@@ -83,8 +126,6 @@
                  font-size:14px; text-transform:uppercase; }
   .chAdd button { padding:9px 14px; border:1px solid var(--accent); background:#fff; color:var(--accent);
                   border-radius:8px; font-weight:700; cursor:pointer; }
-  #chHiddenToggle { margin-top:10px; border:0; background:none; color:#999; text-decoration:underline;
-                    cursor:pointer; font-size:13px; padding:0; }
   .previews { display:none; min-width:0; }
   .previews.on { display:block; }
   .pager { display:flex; align-items:center; justify-content:center; gap:14px; margin-bottom:10px; }
@@ -131,7 +172,9 @@
   <div id="drop" tabindex="0" role="button" aria-label="Choose a PDF">
     <strong>Drop your sides PDF here</strong>
     <p>or click to choose a file</p>
-    <input type="file" id="file" accept="application/pdf,.pdf" hidden>
+    <p class="dropAlt">Prepped elsewhere? Also drop a <code>.sceneline</code> show file (one or more) to
+       load the character list from your breakdown instead of re-reading the PDF.</p>
+    <input type="file" id="file" accept="application/pdf,.pdf,.sceneline,application/json" multiple hidden>
   </div>
 
   <div class="controls">
@@ -152,10 +195,22 @@
     </div>
   </div>
 
+  <div class="controls" id="wmRow">
+    <label for="wmText">Watermark text <span class="wmOpt">(optional)</span></label>
+    <input type="text" id="wmText" autocomplete="off" spellcheck="false"
+           placeholder="text stamped across each page, e.g. a name"
+           title="For maximum readability: if your copy is stamped with a watermark, enter its text exactly (separate several with |). It is then ignored when finding characters and sizing dialogue. The watermark itself stays on the page. Loading a .sceneline show file fills this in automatically when the file records the watermark.">
+  </div>
+
   <div id="status"></div>
   <ul id="warnings"></ul>
+  <div id="reconcileBanner" hidden></div>
 
   <button id="download">Download enlarged PDF</button>
+  <div id="exportRow" hidden>
+    <button id="exportBtn" type="button">Export .sceneline</button>
+    <button id="exportFullBtn" type="button" hidden>Export with script text (full)</button>
+  </div>
 
   <div class="workspace">
     <aside id="charRail" aria-label="Highlight characters">
@@ -168,7 +223,6 @@
         <input id="chAddName" placeholder="Add a missed name&hellip;" maxlength="40" aria-label="Add a character name">
         <button id="chAddBtn" type="button">Add</button>
       </div>
-      <button id="chHiddenToggle" type="button" hidden></button>
     </aside>
 
     <div class="previews" id="previews">
@@ -249,6 +303,7 @@ window.__bootSides__ = function (pdfjs) {
   var drop = document.getElementById('drop');
   var fileInput = document.getElementById('file');
   var slider = document.getElementById('scale');
+  var wmInput = document.getElementById('wmText');
   var scaleVal = document.getElementById('scaleVal');
   var status = document.getElementById('status');
   var warnUl = document.getElementById('warnings');
@@ -263,8 +318,12 @@ window.__bootSides__ = function (pdfjs) {
   var charList = document.getElementById('charList');
   var chAddName = document.getElementById('chAddName');
   var chAddBtn = document.getElementById('chAddBtn');
-  var chHiddenToggle = document.getElementById('chHiddenToggle');
   var modeSeg = document.getElementById('modeSeg');
+  var reconcileBanner = document.getElementById('reconcileBanner');
+  var exportRow = document.getElementById('exportRow');
+  var exportBtn = document.getElementById('exportBtn');
+  var exportFullBtn = document.getElementById('exportFullBtn');
+  var APP_VERSION = '__VERSION__';
 
   var prefs = loadPrefs();
   if (prefs.scale >= 1 && prefs.scale <= 1.5) slider.value = prefs.scale;
@@ -278,16 +337,33 @@ window.__bootSides__ = function (pdfjs) {
   var originalBytes = null, originalName = 'sides.pdf';
   var outBlobUrl = null, busy = false, queued = false;
   var lastChars = [];        // characters from the last engine report
-  var showHidden = false;
+  var lastReport = null;     // the last engine report (for re-reconcile)
+  // .sceneline interchange state
+  var loadedShows = [];      // [{ name, parsed }] parsed .sceneline files (union of shows)
+  var reconcileResult = null;// engine.reconcile output when shows are loaded
+  var sourceMode = 'file';   // 'file' (authoritative) | 'pdf' (fall back to extraction)
 
   // ---- character rail ----
   function railNorm(n) { return String(n || '').toUpperCase().replace(/\s+/g, ' ').trim(); }
   function isHidden(n) { return prefs.hiddenChars.indexOf(n) !== -1; }
 
   function charModel() {
-    // detected characters (engine order: most lines first), then manual ones
+    // With a show file loaded (and driving), identity is authoritative: the
+    // reconcile roster (file names first, then geometric-only names as a
+    // secondary group). Otherwise, geometric detection as before. Manual adds
+    // are always appended.
     var seen = {}, list = [];
-    lastChars.forEach(function (c) { seen[c.name] = true; list.push(c); });
+    if (reconcileResult && sourceMode === 'file') {
+      reconcileResult.roster.forEach(function (r) {
+        seen[r.name] = true;
+        list.push({
+          name: r.name, lines: r.lines || 0, blocks: 0, dual: false,
+          source: r.source, matched: r.matched, secondary: r.source === 'pdf',
+        });
+      });
+    } else {
+      lastChars.forEach(function (c) { seen[c.name] = true; list.push(c); });
+    }
     prefs.manualNames.forEach(function (n) {
       if (!seen[n]) list.push({ name: n, lines: 0, blocks: 0, dual: false, manual: true });
     });
@@ -295,6 +371,9 @@ window.__bootSides__ = function (pdfjs) {
   }
 
   function metaLabel(c) {
+    if (c.source === 'file' && !c.matched) return 'not matched in this PDF (check the draft)';
+    if (c.source === 'pdf') return 'in this PDF · not in show file'
+      + (c.lines ? ' · ' + (c.lines === 1 ? '1 line' : c.lines + ' lines') : '');
     if (c.manual) return 'added by you';
     var bits = [];
     if (c.lines === 0) bits.push('no dialogue found');
@@ -330,40 +409,73 @@ window.__bootSides__ = function (pdfjs) {
     if (!originalBytes) return;
     charRail.className = 'on';
     charList.innerHTML = '';
-    var model = charModel();
-    var hiddenCount = 0;
+    var model = charModel().filter(function (c) { return !isHidden(c.name); });
+    var sel = prefs.enlargeMode === 'selected';
+    if (sel && model.length) {
+      var instr = document.createElement('p');
+      instr.className = 'railInstruct';
+      instr.textContent = 'Tap who you’re reading. Their lines get bigger.';
+      charList.appendChild(instr);
+    }
+    var groupShown = false;
     model.forEach(function (c) {
-      if (isHidden(c.name) && !showHidden) { hiddenCount++; return; }
+      if (c.secondary && !groupShown) {
+        groupShown = true;
+        var gl = document.createElement('div');
+        gl.className = 'railGroup';
+        gl.textContent = 'Also in this PDF (not in the show file)';
+        charList.appendChild(gl);
+      }
+      var on = sel && !!prefs.enlargeChars[c.name];
       var row = document.createElement('div');
-      row.className = 'chRow' + ((c.lines <= 1 && !c.manual) ? ' minor' : '');
+      var cls = 'chRow';
+      if (c.source === 'file' && !c.matched) cls += ' unmatched';
+      else if (c.secondary) cls += ' secondary';
+      else if (c.lines <= 1 && !c.manual && !c.source) cls += ' minor';
+      if (on) cls += ' enl';
+      row.className = cls;
       var top = document.createElement('div');
-      top.className = 'chTop';
+      top.className = 'chTop' + (sel ? ' sel' : '');
+      // enlarge checkbox (Selected mode only): a big, obvious box; the whole
+      // name row is also a tap target so a tired thumb can't miss it.
+      if (sel) {
+        var chk = document.createElement('button');
+        chk.type = 'button';
+        chk.className = 'enlChk' + (on ? ' on' : '');
+        chk.setAttribute('aria-pressed', on ? 'true' : 'false');
+        chk.setAttribute('aria-label', (on ? 'Enlarging ' : 'Enlarge ') + c.name);
+        chk.textContent = on ? '✓' : '';
+        chk.addEventListener('click', function (e) { e.stopPropagation(); toggleEnlarge(c.name); });
+        top.appendChild(chk);
+      }
       var nameEl = document.createElement('span');
       nameEl.className = 'chName';
       nameEl.textContent = c.name;
+      if (c.source === 'file' && !c.matched) {
+        var chip = document.createElement('span');
+        chip.className = 'chip unmatched';
+        chip.textContent = 'in show file';
+        nameEl.appendChild(chip);
+      }
       var meta = document.createElement('span');
       meta.className = 'chMeta';
-      meta.textContent = metaLabel(c) + (isHidden(c.name) ? ' · hidden' : '');
-      var hide = document.createElement('button');
-      hide.type = 'button';
-      hide.className = 'chHide';
-      hide.title = isHidden(c.name) ? 'restore' : (c.manual ? 'remove' : 'not a character — hide');
-      hide.textContent = isHidden(c.name) ? '↩' : '×';
-      hide.addEventListener('click', function () { toggleHide(c); });
+      meta.textContent = metaLabel(c);
       top.appendChild(nameEl); top.appendChild(meta);
-      if (prefs.enlargeMode === 'selected' && !isHidden(c.name)) {
-        var aa = document.createElement('button');
-        aa.type = 'button';
-        aa.className = 'aa' + (prefs.enlargeChars[c.name] ? ' on' : '');
-        aa.textContent = 'Aa';
-        aa.title = prefs.enlargeChars[c.name] ? 'dialogue will be enlarged'
-                                              : "tap to enlarge this character's dialogue";
-        aa.addEventListener('click', function () { toggleEnlarge(c.name); });
-        top.appendChild(aa);
+      // quiet "remove" ONLY for names the user typed in (undo a typo'd add).
+      // Detected names have no remove: unused ones are harmless, and it kills
+      // the accidental-tap risk of an "x" on every row.
+      if (c.manual) {
+        var rm = document.createElement('button');
+        rm.type = 'button';
+        rm.className = 'chRemove';
+        rm.title = 'remove this name';
+        rm.textContent = 'remove';
+        rm.addEventListener('click', function (e) { e.stopPropagation(); removeName(c.name); });
+        top.appendChild(rm);
       }
-      top.appendChild(hide);
+      if (sel) top.addEventListener('click', function () { toggleEnlarge(c.name); });
       row.appendChild(top);
-      if (!isHidden(c.name)) row.appendChild(swatchRow(c));
+      row.appendChild(swatchRow(c));
       charList.appendChild(row);
     });
     if (!model.length) {
@@ -372,12 +484,6 @@ window.__bootSides__ = function (pdfjs) {
       p.textContent = 'No character cues detected in this PDF. You can still add a name below.';
       charList.appendChild(p);
     }
-    var totalHidden = model.filter(function (c) { return isHidden(c.name); }).length;
-    if (totalHidden > 0) {
-      chHiddenToggle.hidden = false;
-      chHiddenToggle.textContent = showHidden ? 'Collapse hidden names' :
-        'Show ' + totalHidden + ' hidden name' + (totalHidden > 1 ? 's' : '');
-    } else chHiddenToggle.hidden = true;
   }
 
   function assignColor(name, idx) {
@@ -426,16 +532,12 @@ window.__bootSides__ = function (pdfjs) {
   });
   syncModeSeg();
 
-  function toggleHide(c) {
-    var i = prefs.hiddenChars.indexOf(c.name);
-    if (i !== -1) prefs.hiddenChars.splice(i, 1);
-    else {
-      if (c.manual) {
-        var mi = prefs.manualNames.indexOf(c.name);
-        if (mi !== -1) prefs.manualNames.splice(mi, 1);
-      } else prefs.hiddenChars.push(c.name);
-      delete prefs.charColors[c.name];
-    }
+  // Remove a name the user typed in (undo a typo'd add), and its prefs.
+  function removeName(name) {
+    var mi = prefs.manualNames.indexOf(name);
+    if (mi !== -1) prefs.manualNames.splice(mi, 1);
+    delete prefs.charColors[name];
+    delete prefs.enlargeChars[name];
     savePrefs(prefs);
     renderRail();
     scheduleProcess();
@@ -452,7 +554,6 @@ window.__bootSides__ = function (pdfjs) {
     renderRail();
   });
   chAddName.addEventListener('keydown', function (e) { if (e.key === 'Enter') chAddBtn.click(); });
-  chHiddenToggle.addEventListener('click', function () { showHidden = !showHidden; renderRail(); });
 
   function activeHighlights() {
     var hl = {};
@@ -460,6 +561,169 @@ window.__bootSides__ = function (pdfjs) {
       if (!isHidden(name)) hl[name] = prefs.charColors[name];
     }
     return hl;
+  }
+
+  // ---- .sceneline interchange (import / reconcile / export) ----
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  function reconcileNow() {
+    if (!loadedShows.length || !lastReport) { reconcileResult = null; return; }
+    var unioned = engine.unionShows(loadedShows.map(function (s) { return s.parsed; }));
+    reconcileResult = engine.reconcile(unioned, {
+      characters: lastReport.characters || [],
+      sluglines: lastReport.sluglines || [],
+    });
+  }
+
+  function setSource(m) {
+    if (sourceMode === m) return;
+    sourceMode = m;            // colors/enlargement are keyed by name, so no reprocess needed
+    renderRail();
+    renderReconcileBanner();
+  }
+
+  function clearShows() {
+    loadedShows = [];
+    reconcileResult = null;
+    sourceMode = 'file';
+    renderReconcileBanner();
+    renderExportRow();
+    renderRail();
+  }
+
+  function renderExportRow() {
+    if (!loadedShows.length) { exportRow.hidden = true; return; }
+    exportRow.hidden = false;
+    exportFullBtn.hidden = !loadedShows.some(function (s) { return s.parsed.profile === 'full'; });
+  }
+
+  function renderReconcileBanner() {
+    if (!loadedShows.length) { reconcileBanner.hidden = true; reconcileBanner.innerHTML = ''; return; }
+    reconcileBanner.hidden = false;
+    var names = loadedShows.map(function (s) { return s.name; }).join(', ');
+    var html = '<div class="rcLine"><strong>Show file' + (loadedShows.length > 1 ? 's' : '') + ':</strong> '
+      + esc(names) + ' &middot; '
+      + (sourceMode === 'file' ? 'character identity comes from the file' : "using the PDF's own extraction")
+      + ' <button type="button" class="rcClear" id="rcClear">clear</button></div>';
+    var unmatched = (reconcileResult && reconcileResult.unmatchedFileNames) || [];
+    var foreign = (reconcileResult && reconcileResult.foreignSluglines) || [];
+    if (sourceMode === 'file' && unmatched.length) {
+      html += '<div class="rcNote">' + unmatched.length + ' name' + (unmatched.length > 1 ? 's' : '')
+        + ' in the show file had no dialogue on these pages (check the draft matches): '
+        + esc(unmatched.join(', ')) + '.</div>';
+    }
+    if (foreign.length) {
+      html += '<div class="rcWarn"><strong>Possible draft or episode mismatch.</strong> '
+        + foreign.length + ' scene heading' + (foreign.length > 1 ? 's' : '') + ' in this PDF '
+        + (foreign.length > 1 ? 'are' : 'is') + ' in none of the loaded show file'
+        + (loadedShows.length > 1 ? 's' : '') + ':<ul>';
+      foreign.slice(0, 8).forEach(function (f) {
+        html += '<li>' + esc(f.raw) + ' <span style="opacity:.65">(p.' + esc(f.page) + ')</span></li>';
+      });
+      if (foreign.length > 8) html += '<li>&hellip; and ' + (foreign.length - 8) + ' more</li>';
+      html += '</ul><div class="rcPick">Which source drives the character list? '
+        + '<button type="button" id="srcFile"' + (sourceMode === 'file' ? ' class="on"' : '') + '>Show file</button>'
+        + '<button type="button" id="srcPdf"' + (sourceMode === 'pdf' ? ' class="on"' : '') + '>PDF extraction</button></div></div>';
+    }
+    reconcileBanner.innerHTML = html;
+    var rc = document.getElementById('rcClear'); if (rc) rc.addEventListener('click', clearShows);
+    var sf = document.getElementById('srcFile'); if (sf) sf.addEventListener('click', function () { setSource('file'); });
+    var sp = document.getElementById('srcPdf'); if (sp) sp.addEventListener('click', function () { setSource('pdf'); });
+  }
+
+  function pagesForName(name) {
+    if (reconcileResult) {
+      for (var i = 0; i < reconcileResult.roster.length; i++)
+        if (reconcileResult.roster[i].name === name) return reconcileResult.roster[i].pages || [];
+    }
+    var f = lastChars.filter(function (x) { return x.name === name; })[0];
+    return (f && f.pages) || [];
+  }
+
+  function currentSidesCharacters() {
+    var out = [];
+    charModel().forEach(function (c) {
+      if (isHidden(c.name)) return;
+      var pIdx = prefs.charColors[c.name];
+      out.push({
+        name: c.name,
+        pages: pagesForName(c.name),
+        paletteIndex: pIdx == null ? null : pIdx,
+        enlarge: prefs.enlargeMode === 'selected' ? !!prefs.enlargeChars[c.name] : true,
+        added: prefs.manualNames.indexOf(c.name) !== -1,
+      });
+    });
+    return out;
+  }
+
+  function exportSceneline(profile) {
+    if (!loadedShows.length) return;
+    var block = engine.buildSidesBlock({
+      scale: +slider.value, mode: prefs.enlargeMode, characters: currentSidesCharacters(),
+    });
+    loadedShows.forEach(function (s, i) {
+      var env = engine.buildScenelineExport(s.parsed.envelope, block, { profile: profile, appVersion: APP_VERSION });
+      var url = URL.createObjectURL(new Blob([JSON.stringify(env, null, 2)], { type: 'application/json' }));
+      setTimeout(function () {
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = s.name.replace(/\.sceneline$/i, '') + '.sceneline';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+      }, i * 250); // stagger so browsers allow multiple downloads
+    });
+    setStatus('Exported ' + loadedShows.length + ' .sceneline file' + (loadedShows.length > 1 ? 's' : '')
+      + ' (' + profile + "). Your sides prefs travel in the file's \"sides\" block; other departments' blocks are untouched.");
+  }
+
+  function acceptScenelineFile(file) {
+    return file.text().then(function (text) {
+      var parsed;
+      try { parsed = engine.parseSceneline(text); }
+      catch (e) { setStatus(e && e.message ? e.message : 'Could not read that .sceneline file.', true); return; }
+      loadedShows = loadedShows.filter(function (s) { return s.name !== file.name; });
+      loadedShows.push({ name: file.name, parsed: parsed });
+      // spec §2 rule 7: the show file may record the stamped watermark text
+      // (show.burn_ins). Prefill the watermark field from it, never overwrite
+      // something the user already typed.
+      if (!wmInput.value.trim()) {
+        var burnTexts = [];
+        loadedShows.forEach(function (s) {
+          var bi = s.parsed && s.parsed.show && s.parsed.show.burn_ins;
+          (Array.isArray(bi) ? bi : []).forEach(function (b) {
+            var t = b && typeof b.text === 'string' ? b.text.trim() : '';
+            if (t && burnTexts.indexOf(t) === -1) burnTexts.push(t);
+          });
+        });
+        if (burnTexts.length) {
+          wmInput.value = burnTexts.join(' | ');
+          setStatus('Watermark text filled in from the show file (' + burnTexts.length + ' entr' + (burnTexts.length === 1 ? 'y' : 'ies') + '); it will be ignored during character detection.');
+          scheduleProcess();
+        }
+      }
+      (parsed.warnings || []).forEach(function (w) {
+        var li = document.createElement('li'); li.textContent = file.name + ': ' + w; warnUl.appendChild(li);
+      });
+      reconcileNow();
+      renderReconcileBanner();
+      renderExportRow();
+      if (originalBytes) renderRail();
+      else setStatus('Loaded show file "' + file.name + '". Now drop the matching sides PDF.');
+    });
+  }
+
+  function routeFiles(fileList) {
+    var files = Array.prototype.slice.call(fileList || []);
+    if (!files.length) return;
+    var pdfs = files.filter(function (f) { return /\.pdf$/i.test(f.name) || /pdf$/i.test(f.type); });
+    var scenes = files.filter(function (f) { return /\.sceneline$/i.test(f.name) || (/\.json$/i.test(f.name) && pdfs.indexOf(f) === -1); });
+    scenes.forEach(acceptScenelineFile);
+    if (pdfs.length) acceptFile(pdfs[pdfs.length - 1]);
+    else if (!scenes.length) acceptFile(files[0]); // let acceptFile surface the not-a-PDF message
   }
 
   // ---- canvas preview (works on iOS/Android where PDF iframes don't) ----
@@ -539,6 +803,9 @@ window.__bootSides__ = function (pdfjs) {
     // yield to paint before heavy work
     setTimeout(function () {
       var opts = { scale: s, highlights: activeHighlights() };
+      var wmT = (wmInput.value || '').split('|').map(function (t) { return t.trim(); })
+        .filter(function (t) { return t; });
+      if (wmT.length) opts.watermarkText = wmT;
       if (prefs.enlargeMode === 'page') opts.mode = 'page';
       else if (prefs.enlargeMode === 'reader') opts.mode = 'reader';
       else if (prefs.enlargeMode === 'selected') {
@@ -557,7 +824,11 @@ window.__bootSides__ = function (pdfjs) {
         outBlobUrl = URL.createObjectURL(blob);
         showWarnings(res.report);
         lastChars = res.report.characters || [];
+        lastReport = res.report;
+        reconcileNow();
         renderRail();
+        renderReconcileBanner();
+        renderExportRow();
         var prevA = docA;
         return openDoc(res.bytes).then(function (d) {
           docA = d; if (prevA) prevA.destroy();
@@ -579,7 +850,7 @@ window.__bootSides__ = function (pdfjs) {
           var scaled = res.report.pages.filter(function (p) { return p.appliedScale > 1.001; }).length;
           var what = res.report.mode === 'page' ? 'everything' : 'dialogue';
           var note = (prefs.enlargeMode === 'selected' && !(opts.enlargeOnly && opts.enlargeOnly.length))
-            ? ' Tap "Aa" next to a character to choose whose dialogue grows.' : '';
+            ? ' Check the characters you’re reading, in the list, to choose whose dialogue grows.' : '';
           setStatus('Done — ' + what + ' enlarged on ' + scaled + ' of ' + res.report.pages.length + ' pages.'
                     + highlightSummary(res.report) + note);
         }
@@ -642,11 +913,13 @@ window.__bootSides__ = function (pdfjs) {
     drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove('hover'); });
   });
   drop.addEventListener('drop', function (e) {
-    acceptFile(e.dataTransfer.files && e.dataTransfer.files[0]);
+    routeFiles(e.dataTransfer && e.dataTransfer.files);
   });
   drop.addEventListener('click', function () { fileInput.click(); });
   drop.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') fileInput.click(); });
-  fileInput.addEventListener('change', function () { acceptFile(fileInput.files[0]); });
+  fileInput.addEventListener('change', function () { routeFiles(fileInput.files); });
+  exportBtn.addEventListener('click', function () { exportSceneline('lean'); });
+  exportFullBtn.addEventListener('click', function () { exportSceneline('full'); });
 
   // slider
   slider.addEventListener('input', function () {
@@ -655,6 +928,9 @@ window.__bootSides__ = function (pdfjs) {
     savePrefs(prefs);
     scheduleProcess();
   });
+
+  // watermark text (per-document, deliberately NOT saved in prefs)
+  wmInput.addEventListener('input', function () { scheduleProcess(); });
 
   // download
   dlBtn.addEventListener('click', function () {

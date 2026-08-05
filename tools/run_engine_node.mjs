@@ -41,12 +41,14 @@ if (hlArg) {
     if (m) highlights[m[1].trim()] = parseInt(m[2], 10);
   }
 }
-let mode = 'dialogue', enlargeOnly = null;
+let mode = 'dialogue', enlargeOnly = null, watermarkText = null;
 for (const f of argv.filter(a => a.startsWith('--'))) {
   if (f === '--mode=page') mode = 'page';
   else if (f === '--mode=reader') mode = 'reader';
   else if (f.startsWith('--enlarge-only=')) {
     enlargeOnly = f.slice('--enlarge-only='.length).split(';').map(s => s.trim()).filter(Boolean);
+  } else if (f.startsWith('--watermark-text=')) {
+    watermarkText = f.slice('--watermark-text='.length).split('|').map(s => s.trim()).filter(Boolean);
   }
 }
 
@@ -54,7 +56,7 @@ const engine = createSidesEngine({ pdfjsLib, PDFLib });
 const bytes = new Uint8Array(fs.readFileSync(inFile));
 
 try {
-  const { bytes: out, report } = await engine.process(bytes, { scale, highlights, mode, enlargeOnly });
+  const { bytes: out, report } = await engine.process(bytes, { scale, highlights, mode, enlargeOnly, watermarkText });
   fs.writeFileSync(outFile, out);
   fs.writeFileSync(outFile + '.report.json', JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));

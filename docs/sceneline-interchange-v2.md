@@ -1,0 +1,203 @@
+# The `.sceneline` interchange format — v2
+
+One show, many benches. This spec lets every Gotham scene-breakdown tool —
+**Sceneline** (runs the read), **Tablecut** (will shoot it), **TechSpotter** (preps
+it), **sides-enlarger** (prints it for actors) — read and write one file, so work
+done in any tool flows to the others. File extension stays **`.sceneline`**; the
+payload is a single UTF-8 JSON object.
+
+## 1. Envelope
+
+```json
+{
+  "format": "sceneline",
+  "interchange": 2,
+  "source": {
+    "title": "EP 101",
+    "file": "MyShow_EP101.pdf",
+    "generator": "techspotter/1.0",
+    "created": "2026-07-26T14:00:00Z"
+  },
+  "show": {
+    "characters": ["VICTOR", "DANA", "..."],
+    "cast_list": [],
+    "cast_nonspeaking": [],
+    "scenes": [
+      {
+        "scene": "14",
+        "scene_heading": "INT. LAB - NIGHT",
+        "page_start": 12,
+        "speakers": ["VICTOR", "DANA"],
+        "present_suggest": [],
+        "dialogue_text": "…optional…",
+        "action_text": "…optional…"
+      }
+    ],
+    "review_dismissed": []
+  },
+  "extensions": { }
+}
+```
+
+- **`interchange: 2`** identifies this spec. A file *without* the field (or
+  without `extensions`) is **v1** — Sceneline's existing bundles — and every v2
+  reader MUST accept it (v1 is exactly the envelope above minus the two new
+  top-level fields).
+- **`show` is the core.** Every tool MUST read it; a tool that edits the matrix
+  MUST write it back complete.
+
+## 2. Core rules (violating these breaks real scripts)
+
+1. **`scene` ids are strings** — real drafts have `"22A"`. Never parse to int;
+   order is the array order, not numeric sort.
+2. **Character names are uppercase, trimmed**, and variant names are distinct
+   entries (`YOUNG VALERIE` ≠ `VALERIE`, `VICTOR'S TEXT` ≠ `VICTOR`) — merging is a
+   human decision made in some tool's UI, never implied by the format.
+3. `speakers` = who has dialogue; `present_suggest` = suggested non-speaking
+   presence. Operator-confirmed presence lives in `speakers` (a confirmed cell is
+   a fact, not a suggestion).
+4. **`dialogue_text` / `action_text` are OPTIONAL** — see profiles (§4).
+5. **`show.cast_aliases` (optional, additive; rev e)** records operator
+   identity rulings as a mapping from a printed variant name to its part:
+   `{"VICTOR (ON THE PHONE)": "VICTOR", "YOUNG VALERIE": null}`. `null` pins
+   keep-separate (an explicit "different people" ruling). It is a
+   **derivation input** for the shared fold (scriptparse policy data): it
+   never collapses, renames, or removes `show.characters` entries (rule 2
+   stands), and writers MUST NOT apply it destructively to `show`. Readers
+   that do not understand it ignore it; absence means no rulings recorded.
+6. **`scenes[].present_confirmed` (optional, additive; rev f)** records
+   operator-confirmed presence WITHOUT lines, for tools that distinguish
+   "in the scene, silent" from "speaks" (TechSpotter's matrix does). Rule 3
+   stands for tools without the distinction: they MAY fold confirmed
+   presence into `speakers` as before. Readers ignore the field if unknown.
+7. **`show.burn_ins` (optional, additive; rev g)** — burn-in/watermark text a
+   parsing engine stripped before analysis, surfaced per the never-silent
+   doctrine (sibling of `rejected_cues`). Entries:
+   `{"text": "…", "signal": "rotated" | "repeated-position", "pages": N,
+   "count": N, "anchor": {…}}` — `anchor` is the first-seen occurrence in
+   §3.5 geometry; `pages` = distinct pages stripped from; `count` = total
+   occurrences. The strip rules themselves are scriptparse policy data
+   (`burn_in` rule type, hub issue #16 ruling) — this field only registers
+   how the record rides the file. Readers ignore it if unknown; review UIs
+   render it as a notice rail.
+
+## 3. Extensions — the interoperability keystone
+
+`extensions` is a map of **namespaced blocks**, one per concern. Registered now:
+
+| Key | Owner (writer) | Contents |
+|---|---|---|
+| `sound` | TechSpotter | department moments: `{"moments":[{"scene":"14","category":"playback"\|"phone"\|"sfx-reaction","snippet":"…","page":12,"characters":["VICTOR"],"dismissed":false}]}` |
+| `video` | TechSpotter | same shape; categories `phone-screen` \| `tv-screen` \| `video-playback` |
+| `treatments` | Tablecut (candidates writable by any tool) | per-scene handling: `{"14":{"mode":"composite","why":"rapid-fire","source":"techspotter"}}` |
+| `seats` | Tablecut | seat/mic/camera mapping (rig-specific; lean files usually omit) |
+| `sides` | sides-enlarger | `{"settings":{"scale":…,"mode":…},"characters":{"NAME":{"pages":[…],"highlight":{"key":"…","rgb":"#…"},"enlarge":true,"added":true?}}}` — `highlight` carries both the tool's palette key and a plain rgb so others can render it; `added:true` marks operator name-adds made at the sides bench = **promotion candidates** the matrix tools may offer to lift into `show.characters` (sides-enlarger itself never edits `show` in v1) |
+
+**The rule that makes this work: a tool MUST preserve every extension block
+(and any unknown top-level field) it does not understand, VALUE-IDENTICALLY,
+on every import→edit→export round-trip** — keep the parsed object untouched and
+re-emit it; rewrite only the blocks you own. Byte-identity is explicitly NOT
+required (serializers differ in key order/whitespace/number formatting);
+round-trip tests assert **deep equality** of foreign blocks, not literal bytes.
+Strip nothing. (Without this, one pass through any tool silently destroys
+another department's work.)
+
+Unregistered experiments use an `x-` prefix (`x-myidea`); promotion to a bare
+key happens by updating this spec.
+
+## 3.5 Source anchors — one convention, everywhere (rev e)
+
+Any `anchor` field, wherever it appears in a `.sceneline` file (extension
+moments, parse artifacts, future fields), uses ONE geometry:
+
+- **PDF page user space: bottom-left origin, +y up, unit = point (1/72 in).**
+  `bbox: [x0, y0, x1, y1]` = lower-left then upper-right corners (`y0 < y1`).
+- An anchor names its page as `{source_doc, page}`, never a bare page int
+  (stitched packets span documents). Where one document exists, `source_doc`
+  matches `source.file`.
+- Coordinates are in the **viewed frame** (page `/Rotate` resolved), with the
+  page's `rotate` carried alongside so renderers can map back.
+- Coordinates are page space **through Form XObject CTMs**: nested `/Form`
+  content is resolved into page space, never raw content-stream numbers.
+- Extractors that measure top-left / +y down (pdfplumber, pymupdf) convert at
+  the extraction boundary (`y0 = H - bottom`, `y1 = H - top`, H = MediaBox
+  height). Never ship top-left numbers and make consumers flip.
+- Never raster/pixel coordinates (DPI-dependent, break across zoom).
+
+Anchors are additive wherever they appear; readers ignore anchor fields they
+do not understand; no `interchange` bump (§6).
+
+## 4. Profiles: lean vs. full
+
+- **`full`** — includes `dialogue_text`/`action_text`. **As sensitive as the
+  screenplay itself: local-only, never committed to a repo, never uploaded.**
+  Required by tools that index text (Sceneline's tracker; TechSpotter's
+  department scan runs from text but may emit lean output).
+- **`lean`** — the same file with all `dialogue_text`/`action_text` omitted and
+  extension `snippet` fields truncated to ≤ 120 chars. Shareable with cast/crew.
+  Every exporter MUST offer "export lean"; every importer MUST accept both.
+  `source.profile: "lean" | "full"` declares which.
+
+## 5. Adoption status / required changes per tool
+
+| Tool | Reads | Writes | Change needed |
+|---|---|---|---|
+| Sceneline | v1 today | v1 today | accept `interchange:2`; **preserve `extensions` on round-trip** (small backlog item) |
+| TechSpotter | — (new build) | — | build to v2 natively; CSV/XLSX remain as secondary exports |
+| sides-enlarger | own parsing today | — | add import (skip re-extraction when a `.sceneline` is provided) + export (see its brief) |
+| Tablecut | FSD §5.4 commits to `.sceneline` | planned | adopt v2 by name in the FSD; own `treatments`/`seats`; read `sound`/`video` as treatment candidates (see its brief) |
+
+## 6. Versioning policy
+
+Additive changes (new extension keys, new optional fields) do not bump
+`interchange`. Breaking changes to `show` bump it; readers refuse versions above
+what they know **loudly** ("this file is from a newer tool"), never by guessing.
+This spec doc is canonical; it lives in whichever repo hosts it and is copied
+verbatim into each adopting repo's `docs/` (drift is prevented by keeping §1–§4
+short enough to diff by eye).
+
+## 7. Repo hygiene (every adopting repo)
+
+- **Commit this spec at `docs/`** — it contains no script text and must be
+  visible, never parked in a gitignored samples directory.
+- **Gitignore `*.sceneline`** — a full-profile file carries the screenplay's
+  text and must never enter git history. Committed test fixtures are therefore
+  **generated** (synthetic, lean or full) at test time, never stored.
+
+---
+*Rev 2026-07-26b — preservation law clarified to deep-equal (byte-identity
+unachievable through serializers); `sides` block shape registered incl.
+`added:true` promotion candidates; §7 repo hygiene added. (Credit: the
+sides-enlarger session's adoption review.)*
+
+*Rev 2026-07-26c — examples sanitized for public repos: show title, source
+filename, and example character names replaced with fictional placeholders.
+No semantic change; adopting repos should sync their copies.*
+
+*Rev 2026-07-26d — product-name reconciliation: the prep bench is TechSpotter
+(early copies said "Tablework"). This canonical copy has carried the rename
+since its founding; the owner column and generator example read
+techspotter/1.0. Legacy `tablework/*` generator and `"source":"tablework"`
+provenance strings in existing files remain valid, and readers MUST treat
+them as TechSpotter's. (Rename rev requested by the Tablecut session's
+Brief D; the sanitized examples of rev c carry forward. Adopting repos:
+replace your copy with this file whole.)*
+
+*Rev 2026-07-26e — two additive registrations from the scriptparse v0.2
+design round (its PR #2): `show.cast_aliases` (§2 rule 5: operator identity
+rulings as a derivation input; never collapses `show.characters`) and §3.5
+source anchors (one geometry: PDF user space, bottom-left origin, points,
+viewed frame, through Form XObject CTMs, `{source_doc, page}`). No
+`interchange` bump; both additive per §6.*
+
+*Rev 2026-07-26f — additive: `scenes[].present_confirmed` (§2 rule 6)
+records operator-confirmed silent presence, preserving the speaks vs
+present-no-lines distinction TechSpotter's matrix draws (Peter,
+2026-07-26). No `interchange` bump.*
+
+*Rev 2026-07-27g — additive: `show.burn_ins` (§2 rule 7) registers the
+surfaced strip record for burn-in/watermark text (hub issue #16 ruling:
+both strip signals adopted as scriptparse policy data; the record rides
+the show per the never-silent doctrine). Spec home is now the Sceneline
+bench per that ruling; this rev also adopts rev f's text whole from the
+prior canonical copy (TechSpotter). No `interchange` bump.*

@@ -67,11 +67,21 @@ python3 - <<'PY' && echo "    [extraction] PASS" || { echo "    [extraction] FAI
 import json, sys
 rep = json.load(open("out/fixture.1.25.pdf.report.json"))
 names = sorted(c["name"] for c in rep.get("characters", []))
+# WALLACE speaks only inside the grey-shaded (omitted) block on page 10 and
+# must NOT be extracted; the grey exclusion must also announce itself.
+assert "WALLACE" not in names, "grey-shaded character leaked into the list"
+assert any("grey" in w.lower() for w in rep.get("warnings", [])), \
+    "no grey-region warning emitted"
 expected = sorted(["LAURA", "MORROW", "WITNESS", "DIAZ",
                    "ELEANOR FROM HR", "SAM", "MERC #1"])
 if names != expected:
     print("      extracted:", names)
     print("      expected :", expected)
+    # call-sheet column headings arriving as zero-line "characters" is the
+    # signature of the no-dialogue page guard regressing
+    strays = [c["name"] for c in rep.get("characters", []) if not c.get("lines")]
+    if strays:
+        print("      zero-line strays (call-sheet leakage):", strays)
     sys.exit(1)
 PY
 
@@ -106,6 +116,81 @@ echo "==> fixture: reader mode"
 node tools/run_engine_node.mjs out/fixture.pdf out/fixture.reader.pdf 1.25 'LAURA=0' --mode=reader \
   >/dev/null 2>out/fixture.reader.err || { echo "    [reader mode] ENGINE ERROR:"; cat out/fixture.reader.err; fail=1; }
 check_one out/fixture.pdf out/fixture.reader.pdf "reader mode @ 1.25" "$RENDER_DIR/fixture_reader"
+
+# watermarked side: a rotated per-recipient watermark drops a glyph onto minor
+# cue baselines. Without the rotated-item guard those cues fail geometric
+# detection and their characters vanish silently (scriptparse #37); the guard
+# excludes item.rot from line-building so the full cast is recovered, and a
+# never-silent warning still flags the watermark.
+echo "==> fixture (watermarked): rotated burn-in guard recovers the cast (scriptparse #37)"
+node tools/run_engine_node.mjs out/fixture_wm.pdf out/fixture_wm.out.pdf 1.25 \
+  >/dev/null 2>out/fixture_wm.err || { echo "    [watermark] ENGINE ERROR:"; cat out/fixture_wm.err; fail=1; }
+python3 - <<'PY' && echo "    [watermark: cast recovered + never-silent] PASS" || { echo "    [watermark] FAIL"; fail=1; }
+import json
+clean = sorted(c["name"] for c in json.load(open("out/fixture.1.25.pdf.report.json")).get("characters", []))
+rep = json.load(open("out/fixture_wm.out.pdf.report.json"))
+wm = sorted(c["name"] for c in rep.get("characters", []))
+warns = rep.get("warnings", [])
+assert wm == clean, "cast not recovered under watermark: %r vs clean %r" % (wm, clean)
+assert "WM" not in wm, "watermark text leaked into the cast: %r" % wm
+assert any("watermark" in w.lower() for w in warns), "no never-silent watermark warning emitted"
+PY
+check_one out/fixture_wm.pdf out/fixture_wm.out.pdf "watermark: geometry parity" "$RENDER_DIR/fixture_wm"
+
+# declared watermark text (opts.watermarkText): the page-10 stamp "COPY OF
+# JANE DOE" is horizontal, so only the user's declaration can exclude it.
+# Geometry parity must hold (stamp bytes untouched), the match must announce
+# itself, and a mistyped declaration must warn instead of silently no-opping.
+echo "==> fixture: declared watermark text"
+node tools/run_engine_node.mjs out/fixture.pdf out/fixture.wmtext.pdf 1.25 --watermark-text='COPY OF JANE DOE' \
+  >/dev/null 2>out/fixture.wmtext.err || { echo "    [wm-text] ENGINE ERROR:"; cat out/fixture.wmtext.err; fail=1; }
+python3 - <<'PY' && echo "    [wm-text: matched + announced] PASS" || { echo "    [wm-text] FAIL"; fail=1; }
+import json
+rep = json.load(open("out/fixture.wmtext.pdf.report.json"))
+w = rep.get("warnings", [])
+assert any("Watermark text matched" in x for x in w), "match warning missing: %r" % w
+PY
+check_one out/fixture.pdf out/fixture.wmtext.pdf "wm-text: geometry parity" "$RENDER_DIR/fixture_wmtext"
+node tools/run_engine_node.mjs out/fixture.pdf out/fixture.wmmiss.pdf 1.25 --watermark-text='NOT ON ANY PAGE' \
+  >/dev/null 2>/dev/null
+python3 - <<'PY' && echo "    [wm-text: miss warns] PASS" || { echo "    [wm-text: miss warns] FAIL"; fail=1; }
+import json
+rep = json.load(open("out/fixture.wmmiss.pdf.report.json"))
+assert any("did not match" in x for x in rep.get("warnings", [])), "no-match warning missing"
+PY
+
+# multi-episode day-side: the running header varies per page (only the show
+# name is constant) and its glyph-per-op name straddles the x=70 body edge.
+# Locks the show-name furniture anchor and the reader header label.
+echo "==> fixture (multi-episode): dialogue / whole-page / reader"
+run_one out/fixture_multi.pdf fixture_multi
+for m in page reader; do
+  node tools/run_engine_node.mjs out/fixture_multi.pdf "out/fixture_multi.$m.pdf" 1.25 'VOIGHT=0' --mode=$m \
+    >/dev/null 2>"out/fixture_multi.$m.err" || { echo "    [multi $m] ENGINE ERROR:"; cat "out/fixture_multi.$m.err"; fail=1; continue; }
+  check_one out/fixture_multi.pdf "out/fixture_multi.$m.pdf" "multi $m @ 1.25" "$RENDER_DIR/fixture_multi_$m"
+done
+echo "==> fixture (multi-episode): header is furniture, not body text"
+python3 - <<'PY' && echo "    [multi header/label] PASS" || { echo "    [multi header/label] FAIL"; fail=1; }
+import json, re, sys, fitz
+rep = json.load(open("out/fixture_multi.reader.pdf.report.json"))
+breaks = rep.get("readerBreaks", [])
+bad = [b for b in breaks if "PROCEDURAL" not in b]
+if bad:
+    print("      break markers missing the full show name:", bad[:3]); sys.exit(1)
+txt = "\n".join(fitz.open("out/fixture_multi.reader.pdf")[i].get_text()
+                for i in range(fitz.open("out/fixture_multi.reader.pdf").page_count))
+# the header must not leak into the reflowed body as an action paragraph
+for ep in ("'Cold Open'", "'Fallen'", "'Young Blood'"):
+    for line in txt.splitlines():
+        if ep in line and not line.lstrip().startswith("SCRIPT PAGE"):
+            print("      header leaked into reader body:", line[:70]); sys.exit(1)
+# the clipped-head signature of the old left-margin bug
+if re.search(r"\bEDURAL\b", txt):
+    print("      show name lost its head (left-clip regression)"); sys.exit(1)
+# the mid-scene left-margin continuation number must survive
+if "5.46pt1" not in txt:
+    print("      mid-scene left-margin scene number was eaten as furniture"); sys.exit(1)
+PY
 
 # real sides: whole-page mode + selective enlargement of the top character
 run_modes () {
@@ -143,6 +228,14 @@ run_hl () {
     fail=1
   fi
 }
+
+echo "==> .sceneline interchange (import/reconcile/export, acceptance a-e)"
+if node tools/test_sceneline.mjs 2>/dev/null | tee /tmp/sceneline.out | grep -q '^SCENELINE: all'; then
+  grep '    \[' /tmp/sceneline.out
+else
+  grep '    \[' /tmp/sceneline.out || true
+  echo "    [.sceneline] FAIL"; fail=1
+fi
 
 for real in "$@"; do
   name="$(basename "$real" .pdf)"

@@ -37,15 +37,27 @@ TOL_POS = 0.7
 
 def get_lines(page):
     """visual lines: [{y, x0, x1, text, spans:[(x0,y_origin,x1,size,text)], segs}]"""
+    greys = grey_boxes(page)
     d = page.get_text("dict")
     spans = []
     for blk in d["blocks"]:
         if blk["type"] != 0:
             continue
         for ln in blk["lines"]:
+            # mirror the engine's item.rot exclusion: rotated overlay text
+            # (watermarks / burn-in stamps) is not part of the horizontal
+            # layout and must not enter line-building (scriptparse #37).
+            d2 = ln.get("dir", (1, 0))
+            if abs(d2[1]) > 0.02:
+                continue
             for sp in ln["spans"]:
                 t = sp["text"]
                 if not t.strip():
+                    continue
+                # mirror the engine's grey-region exclusion: shaded text is
+                # omitted context, never classified (and never asserted scaled)
+                x0g, _, x1g, _ = sp["bbox"]
+                if greys and in_grey((x0g + x1g) / 2, sp["origin"][1] - 3, greys):
                     continue
                 x0, y0, x1, y1 = sp["bbox"]
                 spans.append({"x0": x0, "x1": x1, "y": round(sp["origin"][1], 2),
@@ -82,6 +94,52 @@ def get_lines(page):
         L["segs"] = segs
         L["text"] = "   ".join(s["text"] for s in segs)
     return lines
+
+
+def grey_boxes(page):
+    """Grey-shaded (omitted / non-shooting) region rects, mirroring the
+    engine's detector: even grey fill (component spread < 0.05, mean 0.2-0.92)
+    and big enough to hold a text line (>= 36x14pt). Text inside is context,
+    not the day's work: excluded from classification and reader expectations."""
+    boxes = []
+    for d in page.get_drawings():
+        f = d.get("fill")
+        if not f:
+            continue
+        if max(f) - min(f) >= 0.05:
+            continue
+        mean = sum(f) / len(f)
+        if not (0.2 <= mean <= 0.92):
+            continue
+        r = d["rect"]
+        if r.width >= 36 and r.height >= 14:
+            boxes.append(r)
+    return boxes
+
+
+def in_grey(px, py, boxes):
+    return any(b.x0 - 1 <= px <= b.x1 + 1 and b.y0 - 1 <= py <= b.y1 + 1 for b in boxes)
+
+
+def rot_ids(page):
+    """(block_no, line_no) of rotated text lines (watermark / burn-in
+    overlays). get_text('words') tuples carry the same block/line indices as
+    get_text('dict'), so this identifies rotated WORDS exactly — a bbox test
+    would swallow body words under a page-sized diagonal stamp. The engine
+    excludes item.rot from the classifier; the word-level checks below mirror
+    that (scriptparse #37)."""
+    ids = set()
+    for bi, blk in enumerate(page.get_text("dict")["blocks"]):
+        if blk.get("type") != 0:
+            continue
+        for li, ln in enumerate(blk["lines"]):
+            if abs(ln["dir"][1]) > 0.02:
+                ids.add((bi, li))
+    return ids
+
+
+def not_rotated(w, ids):
+    return (w[5], w[6]) not in ids
 
 
 def capsy(t):
@@ -170,8 +228,16 @@ def classify_doc(doc):
 
 
 def mark_furniture(pages_lines, heights):
-    """mirror of the engine's markFurniture (page mode): top/bottom-zone rows
-    whose digit-stripped text repeats on at least half the pages"""
+    """mirror of the engine's markFurniture (engine.js). Top/bottom-zone rows
+    that repeat across pages, recognized two ways:
+      (A) identical text — the whole digit-stripped row repeats on >= half the
+          pages (single-show headers, CONTINUED: rows), matched in the wider
+          15%/12% zones.
+      (B) shared show-name anchor — multi-episode "day" sides vary everything
+          but the leading show-name token, matched on that token in the
+          extreme 8% edge band only. A row with no 3+-letter word (a lone page
+          number or "*") is furniture only in that edge band, so a mid-scene
+          left-margin scene number in the top zone stays body text."""
     from collections import defaultdict
 
     def zone(L, H):  # pymupdf y is top-down
@@ -181,24 +247,51 @@ def mark_furniture(pages_lines, heights):
             return "bot"
         return None
 
-    def key(L):
-        return " ".join(t for t in L["text"].split()
-                        if len(re.sub(r"[^A-Za-z]", "", t)) >= 3).upper()
+    def edge(L, H):
+        if L["y"] < 0.08 * H:
+            return "top"
+        if L["y"] > 0.92 * H:
+            return "bot"
+        return None
 
-    seen = defaultdict(set)
+    def sig(t):
+        return re.sub(r"[^A-Za-z]", "", t)
+
+    def key_full(L):
+        return " ".join(t for t in L["text"].split() if len(sig(t)) >= 3).upper()
+
+    def key_lead(L):
+        for t in L["text"].split():
+            if len(sig(t)) >= 3:
+                return sig(t).upper()
+        return ""
+
+    seen_full, seen_lead = defaultdict(set), defaultdict(set)
     for pi, lines in enumerate(pages_lines):
         for L in lines:
-            z = zone(L, heights[pi])
-            if not z or L.get("cls") in ("cue", "dialogue"):
+            if L.get("cls") in ("cue", "dialogue"):
                 continue
-            seen[(z, key(L))].add(pi)
+            zf = zone(L, heights[pi])
+            if zf:
+                kf = key_full(L)
+                if kf:
+                    seen_full[(zf, kf)].add(pi)
+            ze = edge(L, heights[pi])
+            if ze:
+                kl = key_lead(L)
+                if kl:
+                    seen_lead[(ze, kl)].add(pi)
     need = max(2, -(-len(pages_lines) // 2))
     for pi, lines in enumerate(pages_lines):
         for L in lines:
-            z = zone(L, heights[pi])
-            if not z or L.get("cls") in ("cue", "dialogue"):
+            if L.get("cls") in ("cue", "dialogue"):
                 continue
-            if not key(L) or len(seen[(z, key(L))]) >= need:
+            zf = zone(L, heights[pi])
+            if zf and key_full(L) and len(seen_full[(zf, key_full(L))]) >= need:
+                L["furn"] = True
+                continue
+            ze = edge(L, heights[pi])
+            if ze and (not key_lead(L) or len(seen_lead[(ze, key_lead(L))]) >= need):
                 L["furn"] = True
 
 
@@ -216,15 +309,10 @@ def reader_check(b, a, report, fails, notes):
         W = b[pi].rect.width
         lines = before_cls[pi]
         has_dial = any(L.get("cls") == "dialogue" for L in lines)
-        # rotated watermark lines are dropped in reader view
-        rot_ys = []
-        for blk in b[pi].get_text("dict")["blocks"]:
-            if blk["type"] != 0:
-                continue
-            for ln in blk["lines"]:
-                if abs(ln["dir"][1]) > 0.05:
-                    for sp in ln["spans"]:
-                        rot_ys.append(sp["origin"][1])
+        # rotated watermark words are dropped in reader view (identified by
+        # block/line index, not geometry — a page-sized diagonal stamp's bbox
+        # would swallow body words)
+        rot_b = rot_ids(b[pi])
         words = b[pi].get_text("words")
         for w in words:
             if w[4].strip():
@@ -235,11 +323,9 @@ def reader_check(b, a, report, fails, notes):
         counted = set()  # double-struck "bold" words appear twice in place
         scene_shape = re.compile(r"^[A-Z]{0,3}\d+[A-Z0-9]*$")
         for L in keep_rows:
-            if any(abs(L["y"] - ry) <= 3 for ry in rot_ys):
-                continue
             row = sorted((w for w in words
                           if abs(w[3] - L["y"]) <= 5.0 and w[4].strip()
-                          and not any(abs(w[3] - ry) <= 4 for ry in rot_ys)),
+                          and not_rotated(w, rot_b)),
                          key=lambda w: w[0])
             # margin scene numbers are furniture, not body words: reader mode
             # drops/relabels them, so they must not be required. Mirror the
@@ -444,14 +530,15 @@ def main():
         if applied is not None and applied > 1.001:
             bwords = b[pi].get_text("words")
             awords = a[pi].get_text("words")
+            brot, arot = rot_ids(b[pi]), rot_ids(a[pi])
             for L in blines:
                 if mode == "page":
                     if L.get("cls") != "dialogue":
                         continue
                 elif not line_enlarged(L):
                     continue
-                bw = sorted(w for w in bwords if abs(w[3] - L["y"]) <= 5.0 and w[0] < marginStart)
-                aw = sorted(w for w in awords if abs(w[3] - L["y"]) <= 5.0 and w[0] < marginStart)
+                bw = sorted(w for w in bwords if abs(w[3] - L["y"]) <= 5.0 and w[0] < marginStart and not_rotated(w, brot))
+                aw = sorted(w for w in awords if abs(w[3] - L["y"]) <= 5.0 and w[0] < marginStart and not_rotated(w, arot))
                 if len(bw) < 2:
                     continue
                 if len(aw) != len(bw):
@@ -483,10 +570,16 @@ def main():
 
             bwords_e = b[pi].get_text("words")
             awords_e = a[pi].get_text("words")
+            greys_e = grey_boxes(b[pi])
+            brot_e = rot_ids(b[pi])
             for w in bwords_e:
                 if not w[4].strip():
                     continue
-                is_fixed = w[0] >= marginStart or w[2] <= 70 or near_furn(w[3])
+                # grey-shaded (omitted) words and rotated watermark words are
+                # excluded from enlargement: they stay put exactly, like marks
+                is_fixed = (w[0] >= marginStart or w[2] <= 70 or near_furn(w[3])
+                            or (greys_e and in_grey((w[0] + w[2]) / 2, w[3] - 3, greys_e))
+                            or (brot_e and not not_rotated(w, brot_e)))
                 ex0 = w[0] if (is_fixed or s_eff <= 1.001) else anchor + s_eff * (w[0] - anchor)
                 tol = 0.7 if is_fixed else 1.5
                 m = [t for t in awords_e if t[4] == w[4]
@@ -561,7 +654,10 @@ def main():
                     rgb = info["rgb"]
                     if all(abs(f[j] - rgb[j]) < 0.02 for j in range(3)):
                         rects_by_name.setdefault(name, []).append(d["rect"])
-            awords = a[pi].get_text("words")
+            # rotated watermark words (a full-page diagonal stamp crosses every
+            # block) are not body text: never demand them inside a highlight
+            arot_hl = rot_ids(a[pi])
+            awords = [w for w in a[pi].get_text("words") if not_rotated(w, arot_hl)]
             wcut = marginStart
             for name, info in hl.items():
                 myblocks = [B for B in blocks if B["name"] == name

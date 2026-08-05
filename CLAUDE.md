@@ -44,7 +44,9 @@ build.mjs               Inlines pdf.js + worker (base64) + pdf-lib + engine.js -
 tools/make_fixture.py   Generates a synthetic screenplay PDF (reportlab) for tests.
 tools/run_engine_node.mjs  Runs engine.js headless on a PDF (uses node_modules build).
 tools/check.py          Independent verifier (pymupdf) + side-by-side page renders.
+tools/test_sceneline.mjs  Headless acceptance tests for the .sceneline interchange.
 tools/test.sh           One-shot: fixture (and optional real PDFs) at 1.0/1.25/1.5.
+docs/sceneline-interchange-v2.md  The .sceneline interchange spec (committed, no script text).
 .nojekyll               So GitHub Pages serves index.html as-is.
 ```
 
@@ -160,6 +162,39 @@ renderer re-segmenting enlarged lines). It also writes
   then stripped from the stream's `/Filter`. Applying one method to everything
   corrupts mixed documents, so the method is resolved per object.
 
+## The `.sceneline` interchange (import/export)
+Gotham's scene-breakdown tools share one JSON file (spec: `docs/sceneline-interchange-v2.md`).
+sides-enlarger reads it as authoritative for **identity and speaker facts** and
+writes its own `sides` block back; **geometry always comes from the PDF**, so
+import is RECONCILIATION, not skipped extraction.
+- **Engine (pure, in the outer factory scope, exported on the return literal):**
+  `parseSceneline` (accepts v1 + v2; refuses `interchange > 2` loudly),
+  `unionShows` (multi-file packets union, since sides pull pages from several
+  episodes), `reconcile` (maps each PDF cue name to a file name with the SAME
+  `normalizeCueName`; emits `roster`, `unmatchedFileNames`, `foreignSluglines`),
+  `buildSidesBlock`, `buildScenelineExport`. `collectSluglines` (uses `SLUG_SEG`,
+  which tolerates a scene number FUSED into the heading segment, and
+  `normalizeHeading`, which strips leading scene numbers + trailing
+  stars/day-codes/right scene numbers) feeds `report.sluglines`; `collectCharacters`
+  now also carries per-character `pages[]`.
+- **Round-trip law (spec §3):** preserve every foreign extension block and
+  unknown top-level field **value-identically** (keep the parsed object, re-emit
+  by reference); rewrite only `extensions.sides`; `show` is preserved verbatim
+  (v1 never edits the matrix). Tests assert **deep-equal**, never byte-equal.
+- **Draft-mismatch is SUBSET, never count:** a side packet is a small pull from a
+  whole-episode file, so scene-count comparison is meaningless. The PDF's detected
+  sluglines must be a subset of the loaded shows' scenes; a heading in no loaded
+  show raises a per-scene chip. No-dialogue pages (call sheets) contribute no
+  sluglines. Getting fewer headings only weakens detection (no false alarms).
+- **UI (`ui_template.html`):** the drop zone accepts `.sceneline` too (multi-file);
+  with a file loaded the rail shows file identity first (unmatched names get an
+  "in show file" chip), geometric-only names in a secondary group; a banner offers
+  a source picker when foreign sluglines appear; "Export .sceneline" is round-trip
+  only (needs a loaded base) and defaults to lean.
+- **Tests:** `tools/test_sceneline.mjs` (wired into `test.sh`) generates synthetic
+  fixtures at runtime (spec §7: never store a `.sceneline`) and asserts acceptance
+  (a)-(e) incl. the deep-equal round-trip. `*.sceneline` is gitignored.
+
 ## Known gotchas (already handled — don't reintroduce)
 - **Revision `*` marks** sit in the far-right margin. A line's fit-width and
   scale-match band use the **dialogue segment only** (spans left of `pageW-80`), or
@@ -231,3 +266,38 @@ default options, nothing loaded or saved.
 **Versioning:** bump `version` in package.json for every user-visible release;
 the build stamps it into the page footer (`__VERSION__`) so the public page
 shows which version people are using.
+
+## Federation (scriptparse)
+
+This bench consumes the shared parser/policy/interchange truth from the
+private `gothamsound/scriptparse` repo (the hub). Standing law lives in the
+hub's CLAUDE.md (the constitution) and binds this repo's agents too. The
+rules that most often apply here:
+
+- Parse/identity/interchange divergences are NEVER fixed locally. File a
+  federation motion in scriptparse (issue template) with evidence, affected
+  benches, and a proposed disposition. Filing is enough: the hub steward's
+  standing sweep litigates (mentions are inert since the 2026-07-27 routing
+  ruling, scriptparse #28).
+- **Pin-lag doctrine (RULED, Peter, 2026-07-30; scriptparse #37):** lagging
+  the hub pin stays this bench's right for behavior changes. It does NOT
+  cover correctness classes: when a release is flagged as fixing a
+  correctness class and this bench loads NEW material that matches it, the
+  bump comes first. Load-time tells for the burn-in class: unexplained
+  scene-id gaps, or repeated single-glyph tokens across pages; either one
+  means suspect burn-in, bump before trusting the parse.
+- Evidence in motions: fixtures by name + checksum, diffs, numbers. Never
+  script text or real production strings.
+- When a hub sync PR or federation issue arrives here (relayed by a cloud
+  routine — the hub's Actions agent has no cross-repo token): absorb it per
+  this repo's own requirements docs, run this repo's gates, and comment the ack
+  (or the objection) on the hub issue. Pin bumps are boring on purpose.
+- **Verification is inverted (ruled 2026-07-26): this bench reports, the hub
+  reconciles.** When the hub publishes a checksum for a shared file (spec copy,
+  policy data, pin), verify THIS repo's copy and post its `sha256` on the hub
+  issue. Nobody reads into another bench's tree, so a missing report reads as
+  unverified, not as clean. On Windows, post both the raw `sha256` and
+  `tr -d '\r' < file | sha256sum` — a difference between them is a
+  `core.autocrlf` artifact, not drift.
+- Escalation is the hub's job: if litigation goes novel, the hub labels
+  needs-peter. Don't ping Peter directly from here for federation matters.

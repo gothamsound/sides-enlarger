@@ -155,15 +155,27 @@
     const map = new Map();
     const get = name => {
       let e = map.get(name);
-      if (!e) map.set(name, e = { name, lines: 0, blocks: 0, firstPage: 0, dual: false });
+      if (!e) map.set(name, e = { name, lines: 0, blocks: 0, firstPage: 0, pages: [], dual: false });
       return e;
     };
+    const seenOn = (e, pi) => { if (!e.pages.includes(pi)) e.pages.push(pi); };
     for (const P of pages) {
+      // A page with no classified dialogue is not script: title pages,
+      // coverage, revision tables and CALL SHEETS. A call sheet's column
+      // table ("SCENE | SET/ DESCRIPTION | CAST | D/N", crew rows like
+      // "HMU/ WARDROBE" and "RPT RPT TO") reads as a grid of dual-cue rows,
+      // and dualNames below bypasses the dialogue-follow noise filter, so
+      // those column labels would land in the character list as zero-line
+      // names. Such pages already pass through byte-identical and are skipped
+      // by reader mode; they must contribute no characters either. Same
+      // predicate reader mode uses, so the three stay consistent.
+      if (!P.lines.some(l => l.cls === 'dialogue')) continue;
       for (const B of (P.blocks || [])) {
         const dial = B.lines.filter(l => l.cls === 'dialogue').length;
         if (!dial || !isPlausibleName(B.name)) continue;
         const e = get(B.name);
         if (!e.firstPage) e.firstPage = P.index;
+        seenOn(e, P.index);
         e.lines += dial; e.blocks++;
       }
       // dual-dialogue cue rows: surface the names for user review (never let
@@ -171,10 +183,185 @@
       for (const n of (P.dualNames || [])) {
         const e = get(n);
         if (!e.firstPage) e.firstPage = P.index;
+        seenOn(e, P.index);
         e.dual = true;
       }
     }
     return [...map.values()].sort((a, b) => b.lines - a.lines || (a.name < b.name ? -1 : 1));
+  }
+
+  // ---------- .sceneline interchange (spec v2) ----------
+  // Pure data helpers: parse/union/reconcile/export the `.sceneline` JSON that
+  // other Gotham benches (Sceneline, TechSpotter, Tablecut) write. The file is
+  // authoritative for identity + speaker facts; geometry always comes from the
+  // PDF, so importing is RECONCILIATION (map each PDF cue name to a file name
+  // by the SAME normalizeCueName used everywhere), never skipped extraction.
+  const SLUG_RE = /^(INT|EXT|I\/E|INT\/EXT|EST)[.\s\/]/;
+
+  // Normalize a scene heading for the subset draft-mismatch check: uppercase,
+  // hyphenate en/em dashes, drop a leading scene number and a trailing story-day
+  // code "(D21)"/"(N3)" so the PDF's printed heading compares to the file's.
+  function normalizeHeading(t) {
+    let s = String(t || '').toUpperCase().replace(/[‐-―]/g, '-');
+    s = s.replace(/^\s*[A-Z]{0,3}\d+[A-Z0-9]*\s+(?=INT|EXT|I\/E|EST)/, ''); // leading scene number
+    // Right-margin furniture (revision stars, a repeated scene number, story-day
+    // "(D21)" codes) can fuse into the heading segment. Strip them off the end
+    // repeatedly. Applied to BOTH the PDF heading and the file's scene_heading,
+    // so the comparison stays consistent whichever side carries the day code.
+    let prev;
+    do {
+      prev = s;
+      s = s.replace(/\s*\*+\s*$/, '');                    // revision stars
+      s = s.replace(/\s*\([^)]*\)\s*$/, '');               // trailing (D21) / (PRESENT)
+      s = s.replace(/\s+[A-Z]{0,3}\d+[A-Z0-9]*\s*$/, '');  // right-margin scene number
+    } while (s !== prev);
+    return s.replace(/\s+/g, ' ').trim();
+  }
+
+  // A heading may lead with its scene number FUSED into the same segment
+  // ("18 INT. QUINN'S CAR ...") when the left scene number sits within a word
+  // gap of the slug, so allow an optional leading scene-number token before
+  // INT/EXT (normalizeHeading strips it back off).
+  const SLUG_SEG = /^\s*(?:[A-Z]{0,3}\d+[A-Z0-9]*\s+)?(?:INT|EXT|I\/E|INT\/EXT|EST)[.\s\/]/;
+
+  // Collect the PDF's geometrically-detected scene headings. Scans line
+  // SEGMENTS (not L.text) so right-margin scene numbers — their own segments —
+  // never ride along. Skips pages with no classified dialogue (a call sheet's
+  // scene list is not the script's scene set). Surfaced as report.sluglines.
+  function collectSluglines(pages) {
+    const out = [];
+    for (const P of (pages || [])) {
+      if (!(P.lines || []).some(l => l.cls === 'dialogue')) continue;
+      for (const L of (P.lines || [])) {
+        for (const sg of (L.segments || [])) {
+          const raw = String(sg.text || '').trim();
+          if (SLUG_SEG.test(raw)) { out.push({ text: normalizeHeading(raw), raw, page: P.index }); break; }
+        }
+      }
+    }
+    return out;
+  }
+
+  // Parse a `.sceneline` file. Accepts v1 (no `interchange`/`extensions`) and
+  // v2; refuses interchange > 2 LOUDLY (spec §6 — never guess a newer format).
+  function parseSceneline(text) {
+    let obj;
+    try { obj = JSON.parse(text); }
+    catch (e) { const err = new Error('Not a valid .sceneline file (could not parse JSON).'); err.code = 'SCENELINE_PARSE'; throw err; }
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+      const err = new Error('Not a .sceneline file (expected a JSON object).'); err.code = 'SCENELINE_SHAPE'; throw err;
+    }
+    if (obj.format != null && obj.format !== 'sceneline') {
+      const err = new Error('Not a .sceneline file (format is "' + obj.format + '").'); err.code = 'SCENELINE_SHAPE'; throw err;
+    }
+    const version = (typeof obj.interchange === 'number') ? obj.interchange : 1;
+    if (version > 2) {
+      const err = new Error('This .sceneline file is from a newer tool (interchange ' + version + '); this build reads up to 2. Update sides-enlarger.'); err.code = 'SCENELINE_VERSION'; throw err;
+    }
+    const show = (obj.show && typeof obj.show === 'object') ? obj.show : {};
+    const warnings = [];
+    if (!obj.show) warnings.push('This .sceneline file has no "show" block; no characters or scenes were loaded from it.');
+    const hasText = (show.scenes || []).some(sc => sc && (sc.dialogue_text != null || sc.action_text != null));
+    const profile = (obj.source && obj.source.profile) || (hasText ? 'full' : 'lean');
+    return { envelope: obj, version, profile, show, warnings };
+  }
+
+  // Union one or more parsed files (side packets pull pages from several
+  // episodes). Characters union (normalized, order-preserving); scene headings
+  // collect for the subset check; speakers imply characters.
+  function unionShows(parsed) {
+    const characters = [], charSeen = new Set();
+    const sceneHeadings = new Set(), scenes = [];
+    const speakersByChar = new Map();
+    const addChar = raw => { const n = normalizeCueName(raw); if (n && !charSeen.has(n)) { charSeen.add(n); characters.push(n); } return n; };
+    for (const item of (parsed || [])) {
+      const show = (item && (item.show || (item.envelope && item.envelope.show) || ((item.characters || item.scenes) ? item : null))) || {};
+      for (const c of (show.characters || [])) addChar(c);
+      for (const sc of (show.scenes || [])) {
+        scenes.push(sc);
+        const h = normalizeHeading((sc && sc.scene_heading) || '');
+        if (h) sceneHeadings.add(h);
+        for (const sp of ((sc && sc.speakers) || [])) {
+          const n = addChar(sp);
+          if (n) { if (!speakersByChar.has(n)) speakersByChar.set(n, new Set()); speakersByChar.get(n).add(String(sc.scene)); }
+        }
+      }
+    }
+    return { characters, sceneHeadings, scenes, speakersByChar };
+  }
+
+  // Reconcile the authoritative file identity against PDF geometry.
+  //  - roster: file names first (authoritative), each matched to a PDF cue by
+  //    normalizeCueName (carrying its geometric pages); then geometric-only
+  //    names (in the PDF, in no loaded show) as source:'pdf' — shown secondary.
+  //  - unmatchedFileNames: file names with no dialogue block on this packet
+  //    (reconcile chips; an operator-added MERC #1 with no lines lands here).
+  //  - foreignSluglines: PDF headings that are a member of NO loaded show
+  //    (per-scene "wrong draft/episode?" chips). Subset, never count.
+  function reconcile(unioned, pdf) {
+    const fileNames = (unioned && unioned.characters) || [];
+    const fileSet = new Set(fileNames);
+    const pdfChars = ((pdf && pdf.characters) || []).map(c => ({ src: c, norm: normalizeCueName(c.name) }));
+    const pdfByNorm = new Map();
+    for (const c of pdfChars) if (c.norm && !pdfByNorm.has(c.norm)) pdfByNorm.set(c.norm, c.src);
+    const roster = [];
+    for (const n of fileNames) {
+      const hit = pdfByNorm.get(n);
+      roster.push({ name: n, source: 'file', matched: !!hit, pages: hit ? (hit.pages || []).slice() : [], lines: hit ? (hit.lines || 0) : 0 });
+    }
+    for (const c of pdfChars) {
+      if (c.norm && !fileSet.has(c.norm)) roster.push({ name: c.norm, source: 'pdf', matched: true, pages: (c.src.pages || []).slice(), lines: c.src.lines || 0 });
+    }
+    const unmatchedFileNames = roster.filter(r => r.source === 'file' && !r.matched).map(r => r.name);
+    const foreignSluglines = ((pdf && pdf.sluglines) || []).filter(sl => !unioned.sceneHeadings.has(sl.text));
+    return { roster, unmatchedFileNames, foreignSluglines };
+  }
+
+  // Build our own `extensions.sides` block from live sides state.
+  // state.characters: [{ name, pages, paletteIndex|null, enlarge, added }].
+  function buildSidesBlock(state) {
+    const characters = {};
+    for (const c of ((state && state.characters) || [])) {
+      const entry = { pages: (c.pages || []).slice() };
+      if (c.paletteIndex != null && PALETTE[c.paletteIndex]) {
+        entry.highlight = { key: PALETTE[c.paletteIndex].key, rgb: PALETTE[c.paletteIndex].hex };
+      }
+      entry.enlarge = !!c.enlarge;
+      if (c.added) entry.added = true;
+      characters[c.name] = entry;
+    }
+    return { settings: { scale: (state && state.scale) || null, mode: (state && state.mode) || null }, characters };
+  }
+
+  function leanShow(show) {
+    const scenes = ((show && show.scenes) || []).map(sc => {
+      const c = {}; for (const k of Object.keys(sc)) if (k !== 'dialogue_text' && k !== 'action_text') c[k] = sc[k]; return c;
+    });
+    return Object.assign({}, show, { scenes });
+  }
+
+  // Export a v2 envelope. THE ROUND-TRIP LAW: every foreign extension block and
+  // unknown top-level field is preserved by reference (deep-equal), `show` is
+  // preserved verbatim (v1 never edits the matrix), and only `extensions.sides`
+  // is rewritten. Lean (default) drops screenplay text from `show`; foreign
+  // blocks are never touched (their owner lean-ifies them, not us).
+  function buildScenelineExport(baseEnvelope, sidesBlock, opts) {
+    opts = opts || {};
+    const profile = opts.profile === 'full' ? 'full' : 'lean';
+    const base = (baseEnvelope && typeof baseEnvelope === 'object') ? baseEnvelope : {};
+    const out = {};
+    for (const k of Object.keys(base)) out[k] = base[k]; // unknown top-level fields preserved by reference
+    out.format = 'sceneline';
+    out.interchange = 2;
+    out.source = Object.assign({}, base.source || {}, { generator: 'sides-enlarger/' + (opts.appVersion || '1'), profile });
+    const show = (base.show && typeof base.show === 'object') ? base.show : { characters: [], scenes: [] };
+    out.show = (profile === 'full') ? show : leanShow(show);
+    const outExt = {};
+    const baseExt = (base.extensions && typeof base.extensions === 'object') ? base.extensions : {};
+    for (const k of Object.keys(baseExt)) outExt[k] = baseExt[k]; // foreign blocks preserved by reference
+    outExt.sides = sidesBlock;
+    out.extensions = outExt;
+    return out;
   }
 
   function classifyPage(P, cal) {
@@ -799,34 +986,49 @@
   }
 
   // Header/footer furniture for whole-page mode: rows in the top/bottom page
-  // zones whose digit-stripped text repeats on at least half the pages (show
-  // name headers, CONTINUED: rows, (CONTINUED) footers, page-number rows).
-  // Furniture is page identity: it never scales, and its tight internal line
-  // gaps must not cap the body's enlargement.
+  // zones that repeat across pages. Furniture is page identity: it never
+  // scales, and its tight internal line gaps must not cap the body's
+  // enlargement. Recognized two ways:
+  //  (A) identical text — the whole digit-stripped row repeats on >= half the
+  //      pages (single-show running headers, CONTINUED: rows, (CONTINUED)
+  //      footers). Matched in the top/bottom 15%/12% zones.
+  //  (B) shared show-name anchor — a multi-episode "day" side stitches scenes
+  //      from several episodes, so the header's episode number, title, draft
+  //      color and page number all vary; only the leading show-name token is
+  //      constant across pages. Match on that leading token, but ONLY in the
+  //      extreme EDGE band (top/bottom 8%, above the text block) so sluglines
+  //      and action that dip into the wider zone are never swept up. A row
+  //      with no 3+-letter word at all (a lone page number or "*") is
+  //      furniture only in that same edge band — a bare scene number deeper in
+  //      the top zone (e.g. a mid-scene "5.46pt1" continuation mark in the
+  //      left margin) is body text, not furniture, and must survive reader mode.
   function markFurniture(pages) {
     const zoneOf = (L, P) => (L.y > P.height * 0.85 ? 'top' : (L.y < P.height * 0.12 ? 'bot' : null));
-    // key on words with 3+ letters only: scene numbers, page numbers, dates
-    // and (2)-style suffixes vary per page and must not split the group
-    const keyOf = L => L.text.split(/\s+/)
-      .filter(t => t.replace(/[^A-Za-z]/g, '').length >= 3)
-      .join(' ').toUpperCase();
-    const seen = new Map(); // zone+key -> Set of page indexes
+    const edgeOf = (L, P) => (L.y > P.height * 0.92 ? 'top' : (L.y < P.height * 0.08 ? 'bot' : null));
+    const sig = t => t.replace(/[^A-Za-z]/g, '');
+    // full key: words with 3+ letters only (scene/page numbers, dates and
+    // (2)-style suffixes vary per page and must not split the group)
+    const keyFull = L => L.text.split(/\s+/).filter(t => sig(t).length >= 3).join(' ').toUpperCase();
+    // lead key: the first 3+-letter word (the show name), '' if none
+    const keyLead = L => { for (const t of L.text.split(/\s+/)) if (sig(t).length >= 3) return sig(t).toUpperCase(); return ''; };
+    const seenFull = new Map(), seenLead = new Map(); // zone+key -> Set of page indexes
+    const bump = (m, k, i) => { if (!m.has(k)) m.set(k, new Set()); m.get(k).add(i); };
     for (const P of pages) {
       for (const L of P.lines) {
-        const z = zoneOf(L, P);
-        if (!z || L.cls === 'dialogue' || L.cls === 'cue') continue;
-        const k = z + '|' + keyOf(L);
-        if (!seen.has(k)) seen.set(k, new Set());
-        seen.get(k).add(P.index);
+        if (L.cls === 'dialogue' || L.cls === 'cue') continue;
+        const zf = zoneOf(L, P); if (zf) { const kf = keyFull(L); if (kf) bump(seenFull, zf + '|' + kf, P.index); }
+        const ze = edgeOf(L, P); if (ze) { const kl = keyLead(L); if (kl) bump(seenLead, ze + '|' + kl, P.index); }
       }
     }
     const need = Math.max(2, Math.ceil(pages.length / 2));
+    const hits = (m, k) => (m.get(k) || new Set()).size >= need;
     for (const P of pages) {
       for (const L of P.lines) {
-        const z = zoneOf(L, P);
-        if (!z || L.cls === 'dialogue' || L.cls === 'cue') continue;
-        const k = keyOf(L);
-        if (!k || (seen.get(z + '|' + k) || new Set()).size >= need) L.furn = true;
+        if (L.cls === 'dialogue' || L.cls === 'cue') continue;
+        const zf = zoneOf(L, P);
+        if (zf) { const kf = keyFull(L); if (kf && hits(seenFull, zf + '|' + kf)) { L.furn = true; continue; } }
+        const ze = edgeOf(L, P);
+        if (ze) { const kl = keyLead(L); if (!kl || hits(seenLead, ze + '|' + kl)) L.furn = true; }
       }
     }
   }
@@ -882,7 +1084,7 @@
     };
     for (const P of pages) {
       if (!P.lines.some(l => l.cls === 'dialogue')) continue;
-      const ML0 = 70, marginR0 = P.width - 80;
+      const marginR0 = P.width - 80;
       // mark where this original script page starts, so on-set page calls
       // can be found in reader view; reference the FULL header name, e.g.
       // 'SCRIPT PAGE 17 · NCIS: NY Ep. 101 "Pilot" Prod. Draft (Full Blue)'
@@ -892,10 +1094,18 @@
         .filter(l => l.furn && l.y > P.height * 0.85)
         .sort((a2, b2) => b2.y - a2.y)[0];
       if (hdr) {
-        headerText = textFromItems(hdr.items.filter(t => !t.rot && t.x + t.w > ML0 && t.x < marginR0));
-        for (const tail of [' ' + num + '.', ' ' + num]) {
-          if (headerText.endsWith(tail)) { headerText = headerText.slice(0, -tail.length).trim(); break; }
-        }
+        // the header spans the full printable width and its show name
+        // legitimately begins in the far-left margin (left of the body's
+        // x=70), so do NOT clip the left here — a glyph-per-op name drawn as
+        // "RESU|RRECTION" would otherwise lose its head. Drop only rotated
+        // watermarks and right-margin marks (revision stars) past the
+        // page-number column.
+        headerText = textFromItems(hdr.items.filter(t => !t.rot && t.x < marginR0));
+        // drop the trailing printed page number ("... 4/28/26  50.") — already
+        // shown as "SCRIPT PAGE N". Glyph-per-op headers split it ("5 0."), so
+        // tolerate spaces between the number's own characters and a bare dot.
+        const numLoose = num.replace(/[^A-Za-z0-9]/g, '').split('').join('\\s*');
+        headerText = headerText.replace(new RegExp('\\s+' + numLoose + '\\s*\\.?\\s*$'), '').trim();
       }
       els.push({ t: 'break', text: 'SCRIPT PAGE ' + num + (headerText ? ' · ' + headerText : '') });
       const ML = 70, marginR = P.width - 80;
@@ -1002,7 +1212,7 @@
           continue;
         }
         // 'other': slug / transition / action
-        if (/^(INT|EXT|I\/E|INT\/EXT|EST)[.\s\/]/.test(text)) {
+        if (SLUG_RE.test(text)) {
           flushPara();
           // margin scene numbers were already stripped from `text` above;
           // show the number once, labeled and set clear of the heading, so
@@ -1150,7 +1360,18 @@
             };
           });
         for (const it of items) totalChars += it.str.length;
-        pages.push({ index: p, width: vp.viewBox[2] - vp.viewBox[0], height: vp.viewBox[3] - vp.viewBox[1], lines: buildLines(items) });
+        // Rotated overlay text (per-recipient watermarks, burn-in stamps) is
+        // not part of the horizontal screenplay layout. Exclude it from
+        // line-building so a rotated glyph that shares a cue's baseline can't
+        // add a left segment / shift x0 and knock the cue out of its band,
+        // dropping the character SILENTLY (no reject rail) — the burn-in
+        // silent-loss class, scriptparse #37. Reader mode already drops
+        // item.rot; the classifier now does too. The rewriter still sees the
+        // raw stream, so the watermark bytes stay byte-identical in the output.
+        const bodyItems = items.filter(it => !it.rot);
+        // items kept raw so process() can re-build lines after grey-region
+        // exclusion (rects only known once the content streams are parsed)
+        pages.push({ index: p, width: vp.viewBox[2] - vp.viewBox[0], height: vp.viewBox[3] - vp.viewBox[1], lines: buildLines(bodyItems), items: bodyItems, rotatedItems: items.length - bodyItems.length });
       }
       await doc.destroy();
       return { pages, totalChars };
@@ -1219,7 +1440,14 @@
         for (const ln of lines) {
           ensure(lh);
           if (opts2.hl) {
-            page.drawRectangle({ x: MX - 6, y: y - lh + sz * 0.18, width: colW + 12, height: lh, color: opts2.hl });
+            // Balanced top/bottom breathing room: center the strip on the
+            // line's glyphs (Times ascent ~0.7, descent ~0.2 of size) instead
+            // of hugging the baseline, which left air on top but cropped
+            // descenders at the bottom. pad on each side; height >= lh keeps a
+            // multi-line block a continuous strip.
+            const base = y - lh + sz * 0.32, pad = sz * 0.30;
+            page.drawRectangle({ x: MX - 6, y: base - sz * 0.20 - pad, width: colW + 12,
+              height: sz * 0.90 + 2 * pad, color: opts2.hl });
           }
           const tw = font.widthOfTextAtSize(ln, sz);
           const x = opts2.align === 'center' ? (W - tw) / 2 : (opts2.align === 'right' ? W - MX - tw : MX);
@@ -1319,12 +1547,181 @@
         }
       }
 
+      // ---- PDF-lib load, hoisted ahead of classification: grey-region
+      // detection reads the raw content streams, and its exclusions must land
+      // BEFORE lines are built and classified. Grey-shaded page regions are
+      // omitted / non-shooting context (Peter's rule, 2026-08-05): their text
+      // is never enlarged, never highlighted, contributes no characters, and
+      // is dropped from reader mode. The bytes stay untouched.
+      const pdfDoc = await PDFLib.PDFDocument.load(bytes, { updateMetadata: false, ignoreEncryption: true });
+      const ctx = pdfDoc.context;
+      const wasEncrypted = await decryptInPlace(PDFLib, pdfDoc);
+      const pdfPages = pdfDoc.getPages();
+      if (pdfPages.length !== pages.length) throw new Error('internal: page count mismatch between parsers');
+
+      const N = PDFLib.PDFName.of.bind(PDFLib.PDFName);
+      const latinOf = u8 => { let s = ''; for (let b = 0; b < u8.length; b++) s += String.fromCharCode(u8[b]); return s; };
+      const bytesOfLatin = str => { const a = new Uint8Array(str.length); for (let b = 0; b < str.length; b++) a[b] = str.charCodeAt(b) & 0xff; return a; };
+      const decodeStream = st => {
+        const hasFilter = st.dict && st.dict.get(N('Filter'));
+        if (st instanceof PDFLib.PDFRawStream) return hasFilter ? PDFLib.decodePDFRawStream(st).decode() : st.contents;
+        if (st.getContents) return st.getContents();
+        return new Uint8Array(0);
+      };
+      const matrixOf = dict => {
+        const mArr = dict && dict.get(N('Matrix'));
+        const r = mArr && ctx.lookup(mArr);
+        if (r && r.size && r.size() === 6) return [0, 1, 2, 3, 4, 5].map(k => ctx.lookup(r.get(k)).asNumber());
+        return [1, 0, 0, 1, 0, 0];
+      };
+      const pageStreamsLatin = page0 => {
+        const resolved0 = ctx.lookup(page0.node.get(N('Contents')));
+        const streams0 = [];
+        if (resolved0 instanceof PDFLib.PDFArray) {
+          for (let k = 0; k < resolved0.size(); k++) streams0.push(ctx.lookup(resolved0.get(k)));
+        } else if (resolved0) streams0.push(resolved0);
+        let latin0 = '';
+        for (const st of streams0) latin0 += latinOf(decodeStream(st)) + '\n';
+        return latin0;
+      };
+      const pageResourcesOf = page0 => page0.node.Resources ? page0.node.Resources() : ctx.lookup(page0.node.get(N('Resources')));
+
+      // Grey-region detection: filled `re` rects with an even grey fill
+      // (components equal within 0.05, mean 0.2-0.92 — validated against real
+      // packets at 0.75/0.85) big enough to hold a text line (>= 36x14pt),
+      // collected in PDF user space through form CTMs. Best-effort: any parse
+      // trouble means no exclusions, never a failure.
+      const collectGreyRects = () => {
+        const perPage = [];
+        const isGrey = comps => {
+          if (!comps || !comps.length || comps.some(v => !isFinite(v))) return false;
+          let mn = Infinity, mx = -Infinity, sum = 0;
+          for (const v of comps) { mn = Math.min(mn, v); mx = Math.max(mx, v); sum += v; }
+          const mean = sum / comps.length;
+          return mx - mn < 0.05 && mean >= 0.2 && mean <= 0.92;
+        };
+        const resolveXF = (resources, tok) => {
+          if (!resources || !tok || tok.raw[0] !== '/') return null;
+          const xoRef = resources.get(N('XObject'));
+          const xoDict = xoRef && ctx.lookup(xoRef);
+          const ref = xoDict && xoDict.get(N(tok.raw.slice(1)));
+          const form = ref && ctx.lookup(ref);
+          if (!form || !form.dict) return null;
+          const sub = form.dict.get(N('Subtype'));
+          if (!sub || sub.toString() !== '/Form') return null;
+          const fResRef = form.dict.get(N('Resources'));
+          return { form, res: fResRef ? ctx.lookup(fResRef) : resources };
+        };
+        const walk = (src, resources, ctm0, out, depth) => {
+          if (depth > 4) return;
+          if (src.indexOf('BI') !== -1 && /(^|[\s>\]])BI[\s\/]/.test(src)) return;
+          let ctm = ctm0, fill = null; // fill: component array, or null = unknown/not-grey-able
+          const stack = [];
+          let rects = [];
+          for (const ins of toInstructions(tokenize(src), src)) {
+            const nums = () => ins.operands.map(t => parseFloat(t.raw));
+            if (ins.op === 'q') { stack.push({ ctm, fill }); continue; }
+            if (ins.op === 'Q') { const s = stack.pop(); if (s) { ctm = s.ctm; fill = s.fill; } continue; }
+            if (ins.op === 'cm' && ins.operands.length === 6) { ctm = mul(nums(), ctm); continue; }
+            if (ins.op === 'g') { fill = nums().slice(0, 1); continue; }
+            if (ins.op === 'rg') { fill = nums().slice(0, 3); continue; }
+            if (ins.op === 'k') { const n4 = nums(); fill = (Math.max(n4[0], n4[1], n4[2]) - Math.min(n4[0], n4[1], n4[2]) < 0.05) ? [1 - Math.min(1, n4[3] + (n4[0] + n4[1] + n4[2]) / 3)] : null; continue; }
+            if (ins.op === 'cs') { fill = null; continue; }
+            if (ins.op === 'sc' || ins.op === 'scn') {
+              const vals = ins.operands.map(t => parseFloat(t.raw));
+              fill = (vals.length >= 1 && vals.length <= 3 && vals.every(v => isFinite(v))) ? vals
+                : (vals.length === 4 && vals.every(v => isFinite(v))) ? [1 - Math.min(1, vals[3] + (vals[0] + vals[1] + vals[2]) / 3)]
+                : null;
+              continue;
+            }
+            if (ins.op === 're' && ins.operands.length === 4) { rects.push(nums()); continue; }
+            if (ins.op === 'f' || ins.op === 'F' || ins.op === 'f*' || ins.op === 'b' || ins.op === 'b*' || ins.op === 'B' || ins.op === 'B*') {
+              if (isGrey(fill)) {
+                for (const r of rects) {
+                  const c1 = apply(ctm, r[0], r[1]), c2 = apply(ctm, r[0] + r[2], r[1] + r[3]);
+                  const x0 = Math.min(c1[0], c2[0]), x1 = Math.max(c1[0], c2[0]);
+                  const y0 = Math.min(c1[1], c2[1]), y1 = Math.max(c1[1], c2[1]);
+                  if (x1 - x0 >= 36 && y1 - y0 >= 14) out.push([x0, y0, x1, y1]);
+                }
+              }
+              rects = []; continue;
+            }
+            if (ins.op === 'S' || ins.op === 's' || ins.op === 'n') { rects = []; continue; }
+            if (ins.op === 'Do') {
+              const hit = resolveXF(resources, ins.operands[0]);
+              if (hit) { try { walk(latinOf(decodeStream(hit.form)), hit.res, mul(matrixOf(hit.form.dict), ctm), out, depth + 1); } catch (e) { /* best-effort */ } }
+              continue;
+            }
+          }
+        };
+        for (const page0 of pdfPages) {
+          const out = [];
+          try { walk(pageStreamsLatin(page0), pageResourcesOf(page0), [1, 0, 0, 1, 0, 0], out, 0); } catch (e) { /* best-effort */ }
+          perPage.push(out);
+        }
+        return perPage;
+      };
+
+      let greyPages = 0, greyRuns = 0;
+      try {
+        const greyRects = collectGreyRects();
+        for (let i = 0; i < pages.length; i++) {
+          const rects = greyRects[i];
+          if (!rects || !rects.length) continue;
+          const P = pages[i];
+          const live = P.items.filter(it => {
+            const px = it.x + it.w / 2, py = it.y + 3;
+            return !rects.some(r => px >= r[0] - 1 && px <= r[2] + 1 && py >= r[1] - 1 && py <= r[3] + 1);
+          });
+          if (live.length !== P.items.length) {
+            P.greyExcluded = P.items.length - live.length;
+            greyRuns += P.greyExcluded; greyPages++;
+            P.lines = buildLines(live);
+          }
+        }
+      } catch (e) { /* grey detection is best-effort; classification proceeds on all text */ }
+
+      // Optional user-declared watermark text (opts.watermarkText): the
+      // interim answer for NON-rotated stamps, which geometry can't tell from
+      // body text (the rotated class is handled automatically above; the full
+      // repeated-position strip is scriptparse policy data and arrives with
+      // package adoption). This is user-directed exclusion of an exact string,
+      // NOT content-based classification: the geometric-detection law stands.
+      // Matches whole items and whole gap-joined segments (covers word-per-op
+      // and glyph-per-op stamps); matched text is excluded from classification
+      // but its bytes stay untouched.
+      const normWm = s => String(s || '').replace(/\s+/g, ' ').trim().toUpperCase();
+      const wmSet = new Set([].concat(opts.watermarkText || []).map(normWm).filter(Boolean));
+      let wmRuns = 0, wmPages = 0;
+      if (wmSet.size) {
+        for (const P of pages) {
+          let live = (P.greyExcluded ? P.lines.flatMap(L => L.items) : P.items)
+            .filter(it => !wmSet.has(normWm(it.str)));
+          let lines = buildLines(live);
+          const drop = new Set();
+          for (const L of lines) for (const sg of L.segments) {
+            if (wmSet.has(normWm(sg.text))) for (const it of sg.items) drop.add(it);
+          }
+          if (drop.size) { live = live.filter(it => !drop.has(it)); lines = buildLines(live); }
+          const removed = (P.greyExcluded ? P.lines.reduce((n, L) => n + L.items.length, 0) : P.items.length) - live.length;
+          if (removed) { wmRuns += removed; wmPages++; P.lines = lines; }
+        }
+      }
+
       const cal = calibrate(pages);
       const report = { requestedScale: requested, mode, calibration: cal, pages: [], warnings: [] };
       report.enlargeOnly = enlargeSet ? Array.from(enlargeSet) : null;
+      if (wasEncrypted) report.warnings.push('Input was permission-locked (encrypted); output is a decrypted copy — treat it with the same care as the original.');
+      if (greyRuns) report.warnings.push('Grey-shaded (omitted) regions detected: ' + greyRuns + ' text run' + (greyRuns === 1 ? '' : 's') + ' across ' + greyPages + ' page' + (greyPages === 1 ? '' : 's') + ' left untouched — not enlarged, not highlighted, and not counted toward the character list.');
+      if (wmSet.size) {
+        report.warnings.push(wmRuns
+          ? 'Watermark text matched and excluded from character detection on ' + wmPages + ' page' + (wmPages === 1 ? '' : 's') + ' (' + wmRuns + ' run' + (wmRuns === 1 ? '' : 's') + '); the watermark itself is untouched.'
+          : 'The watermark text you entered did not match any text in this PDF — check the spelling, or leave the field empty.');
+      }
       if (!cal) {
         report.warnings.push('Could not locate character cues geometrically — layout too unusual. PDF returned unchanged.');
         report.characters = [];
+        report.sluglines = [];
         return { bytes, report };
       }
       const wantHl = Object.keys(hl).length > 0;
@@ -1339,6 +1736,14 @@
       cal.colW = colW;
       const anchorC = cal.dialX + colW / 2; // uniform-scale anchor (see pageScale)
       report.characters = collectCharacters(pages);
+      report.sluglines = collectSluglines(pages); // for .sceneline draft-mismatch subset check
+      // Never-silent: if rotated watermark/burn-in text was present, say so.
+      // The guard above recovers cues the watermark would have hidden, but a
+      // NON-rotated stamp (repeated-position burn-in) is not caught here — that
+      // strip is scriptparse policy data and arrives with package adoption — so
+      // flag it rather than let a missing character pass unremarked (#37).
+      const rotRuns = pages.reduce((n, P) => n + (P.rotatedItems || 0), 0);
+      if (rotRuns) report.warnings.push('Rotated watermark/burn-in text detected (' + rotRuns + ' run' + (rotRuns === 1 ? '' : 's') + ') and excluded from character detection, so cues beneath it are still found. If a character still looks missing, the copy may carry a non-rotated stamp watermark — double-check the character list against the script.');
       // the character name grows with its block: a block's cue is eligible
       // whenever the block has eligible dialogue (a bare cue-shaped label
       // with no dialogue under it never scales)
@@ -1366,22 +1771,8 @@
         return { bytes: readerBytes, report };
       }
 
-      const pdfDoc = await PDFLib.PDFDocument.load(bytes, { updateMetadata: false, ignoreEncryption: true });
-      const ctx = pdfDoc.context;
-      const wasEncrypted = await decryptInPlace(PDFLib, pdfDoc);
-      if (wasEncrypted) report.warnings.push('Input was permission-locked (encrypted); output is a decrypted copy — treat it with the same care as the original.');
-      const pdfPages = pdfDoc.getPages();
-      if (pdfPages.length !== pages.length) throw new Error('internal: page count mismatch between parsers');
-
-      const N = PDFLib.PDFName.of.bind(PDFLib.PDFName);
-      const latinOf = u8 => { let s = ''; for (let b = 0; b < u8.length; b++) s += String.fromCharCode(u8[b]); return s; };
-      const bytesOfLatin = str => { const a = new Uint8Array(str.length); for (let b = 0; b < str.length; b++) a[b] = str.charCodeAt(b) & 0xff; return a; };
-      const decodeStream = st => {
-        const hasFilter = st.dict && st.dict.get(N('Filter'));
-        if (st instanceof PDFLib.PDFRawStream) return hasFilter ? PDFLib.decodePDFRawStream(st).decode() : st.contents;
-        if (st.getContents) return st.getContents();
-        return new Uint8Array(0);
-      };
+      // (pdfDoc/ctx/decoding helpers are hoisted above classification — the
+      // grey-region pass needs them before lines are built)
       const putStreamPlain = (st, str) => {
         const b = bytesOfLatin(str);
         st.contents = b;
@@ -1390,12 +1781,6 @@
         st.dict.delete(N('DecodeParms'));
         st.dict.delete(N('DL'));
       };
-      const matrixOf = dict => {
-        const mArr = dict && dict.get(N('Matrix'));
-        const r = mArr && ctx.lookup(mArr);
-        if (r && r.size && r.size() === 6) return [0, 1, 2, 3, 4, 5].map(k => ctx.lookup(r.get(k)).asNumber());
-        return [1, 0, 0, 1, 0, 0];
-      };
       const visitedForms = new Set();
 
       // Forms invoked more than once (shared across pages, or placed twice)
@@ -1403,36 +1788,105 @@
       // into every other placement. Count every invocation up front; pages
       // that draw text through a multi-use form are left unscaled entirely.
       const formUse = new Map();     // refKey -> total invocations
-      const formHasText = new Map(); // refKey -> shows text (self or nested)
+      const formHasText = new Map(); // refKey -> shows HORIZONTAL text at some invocation
       const pageSharedTextForm = [];
       {
-        const srcCache = new Map();
-        const walk = (src, resources, seen, keysOut) => {
-          if (src.indexOf('BI') !== -1 && /(^|[\s>\]])BI[\s\/]/.test(src)) return true; // inline image: don't parse, assume text
-          let hasText = false;
+        // A multi-use form whose text is ALL rotated (per-recipient watermark
+        // stamps: "James Baker" at 40° on every page) can never carry dialogue,
+        // so it must not cost the page its enlargement. Collect each form's
+        // text matrices in FORM SPACE once, then test them against every
+        // invocation's CTM: only horizontal text (same |b| > 0.05*size test as
+        // item.rot) marks the form text-carrying. Anything unparseable stays
+        // conservative (treated as horizontal). The never-mutate-multi-use
+        // rule in rewriteLevel is unchanged — stamps stay byte-identical.
+        const ID = [1, 0, 0, 1, 0, 0];
+        const rotated = m => Math.abs(m[1]) > 0.05 * (Math.hypot(m[2], m[3]) || 1);
+        const relCache = new Map(); // refKey -> {mats:[{m,key}], nestedCounts:Map, keys:Set, conservative}
+        const resolveForm = (resources, nameTok) => {
+          if (!resources || !nameTok || nameTok.raw[0] !== '/') return null;
+          const xoRef = resources.get(N('XObject'));
+          const xoDict = xoRef && ctx.lookup(xoRef);
+          const ref = xoDict && xoDict.get(N(nameTok.raw.slice(1)));
+          const form = ref && ctx.lookup(ref);
+          if (!form || !form.dict) return null;
+          const sub = form.dict.get(N('Subtype'));
+          if (!sub || sub.toString() !== '/Form') return null;
+          return { form, key: ref.objectNumber + '_' + ref.generationNumber };
+        };
+        // Parse one form's stream in its own space; nested forms fold their
+        // (composed) text matrices and invocation counts into the parent.
+        const parseRel = (key, form, outerRes, depth) => {
+          if (relCache.has(key)) return relCache.get(key);
+          const rel = { mats: [], nestedCounts: new Map(), keys: new Set([key]), conservative: false };
+          relCache.set(key, rel); // set first: a self-recursive form stays sane
+          const bump = (k, n) => rel.nestedCounts.set(k, (rel.nestedCounts.get(k) || 0) + n);
+          try {
+            const src = latinOf(decodeStream(form));
+            if (src.indexOf('BI') !== -1 && /(^|[\s>\]])BI[\s\/]/.test(src)) { rel.conservative = true; return rel; }
+            if (depth > 4) { rel.conservative = true; return rel; }
+            const fResRef = form.dict.get(N('Resources'));
+            const fRes = fResRef ? ctx.lookup(fResRef) : outerRes;
+            let ctm = ID, tm = null;
+            const stack = [];
+            for (const ins of toInstructions(tokenize(src), src)) {
+              const nums = () => ins.operands.map(t => parseFloat(t.raw));
+              if (ins.op === 'q') { stack.push(ctm); continue; }
+              if (ins.op === 'Q') { ctm = stack.pop() || ID; continue; }
+              if (ins.op === 'cm' && ins.operands.length === 6) { ctm = mul(nums(), ctm); continue; }
+              if (ins.op === 'BT') { tm = ID; continue; }
+              if (ins.op === 'ET') { tm = null; continue; }
+              if (ins.op === 'Tm' && ins.operands.length === 6) { tm = nums(); continue; }
+              if ((ins.op === 'Td' || ins.op === 'TD') && tm) { const n2 = nums(); tm = mul([1, 0, 0, 1, n2[0], n2[1]], tm); continue; }
+              if (ins.op === 'Tj' || ins.op === 'TJ' || ins.op === "'" || ins.op === '"') {
+                if (!tm) { rel.conservative = true; break; }
+                rel.mats.push({ m: mul(tm, ctm), key });
+                if (rel.mats.length > 800) { rel.conservative = true; break; }
+                continue;
+              }
+              if (ins.op === 'Do') {
+                const hit = resolveForm(fRes, ins.operands[0]);
+                if (!hit) continue;
+                bump(hit.key, 1);
+                const inner = parseRel(hit.key, hit.form, fRes, depth + 1);
+                if (inner.conservative) { rel.conservative = true; break; }
+                const innerInv = mul(matrixOf(hit.form.dict), ctm);
+                for (const t of inner.mats) rel.mats.push({ m: mul(t.m, innerInv), key: t.key });
+                for (const k of inner.keys) rel.keys.add(k);
+                for (const [k, n] of inner.nestedCounts) bump(k, n);
+                if (rel.mats.length > 800) { rel.conservative = true; break; }
+              }
+            }
+          } catch (e) { rel.conservative = true; }
+          return rel;
+        };
+        // Page pass: absolute space. Count every invocation (nested counts fold
+        // in per invocation of the parent) and test each form's text rotation
+        // under this invocation's CTM.
+        const walkPage = (src, resources, keysOut) => {
+          if (src.indexOf('BI') !== -1 && /(^|[\s>\]])BI[\s\/]/.test(src)) return; // rewriteStream guards BI pages itself
+          let ctm = ID, tm = null;
+          const stack = [];
           for (const ins of toInstructions(tokenize(src), src)) {
-            if (ins.op === 'Tj' || ins.op === 'TJ' || ins.op === "'" || ins.op === '"') { hasText = true; continue; }
-            if (ins.op !== 'Do' || !ins.operands[0] || ins.operands[0].raw[0] !== '/' || !resources) continue;
-            const xoRef = resources.get(N('XObject'));
-            const xoDict = xoRef && ctx.lookup(xoRef);
-            const ref2 = xoDict && xoDict.get(N(ins.operands[0].raw.slice(1)));
-            const form = ref2 && ctx.lookup(ref2);
-            if (!form || !form.dict) continue;
-            const sub = form.dict.get(N('Subtype'));
-            if (!sub || sub.toString() !== '/Form') continue;
-            const key = ref2.objectNumber + '_' + ref2.generationNumber;
-            formUse.set(key, (formUse.get(key) || 0) + 1);
-            keysOut.add(key);
-            if (!seen.has(key)) {
-              seen.add(key);
-              if (!srcCache.has(key)) srcCache.set(key, latinOf(decodeStream(form)));
-              const fResRef = form.dict.get(N('Resources'));
-              const inner = walk(srcCache.get(key), fResRef ? ctx.lookup(fResRef) : resources, seen, keysOut);
-              formHasText.set(key, !!(formHasText.get(key) || inner));
-              if (inner) hasText = true;
-            } else if (formHasText.get(key)) hasText = true;
+            const nums = () => ins.operands.map(t => parseFloat(t.raw));
+            if (ins.op === 'q') { stack.push(ctm); continue; }
+            if (ins.op === 'Q') { ctm = stack.pop() || ID; continue; }
+            if (ins.op === 'cm' && ins.operands.length === 6) { ctm = mul(nums(), ctm); continue; }
+            if (ins.op === 'BT') { tm = ID; continue; }
+            if (ins.op === 'ET') { tm = null; continue; }
+            if (ins.op === 'Tm' && ins.operands.length === 6) { tm = nums(); continue; }
+            if (ins.op !== 'Do') continue;
+            const hit = resolveForm(resources, ins.operands[0]);
+            if (!hit) continue;
+            formUse.set(hit.key, (formUse.get(hit.key) || 0) + 1);
+            const rel = parseRel(hit.key, hit.form, resources, 0);
+            for (const [k, n] of rel.nestedCounts) formUse.set(k, (formUse.get(k) || 0) + n);
+            for (const k of rel.keys) keysOut.add(k);
+            if (rel.conservative) { for (const k of rel.keys) formHasText.set(k, true); continue; }
+            const inv = mul(matrixOf(hit.form.dict), ctm);
+            for (const t of rel.mats) {
+              if (!rotated(mul(t.m, inv))) formHasText.set(t.key, true);
+            }
           }
-          return hasText;
         };
         for (let i = 0; i < pdfPages.length; i++) {
           const keys = new Set();
@@ -1445,7 +1899,7 @@
           let latin0 = '';
           for (const st of streams0) latin0 += latinOf(decodeStream(st)) + '\n';
           const pageRes0 = page0.node.Resources ? page0.node.Resources() : ctx.lookup(page0.node.get(N('Resources')));
-          try { walk(latin0, pageRes0, new Set(), keys); } catch (e) { /* count best-effort */ }
+          try { walkPage(latin0, pageRes0, keys); } catch (e) { /* count best-effort */ }
           pageSharedTextForm.push(keys);
         }
         for (let i = 0; i < pageSharedTextForm.length; i++) {
@@ -1707,7 +2161,12 @@
         const page = pdfPages[i];
         const pageReport = { page: i + 1, appliedScale: requested, dialogueLines: P.lines.filter(l => l.cls === 'dialogue').length, warnings: [] };
         report.pages.push(pageReport);
-        if (P.hasDual) pageReport.warnings.push('dual-dialogue block detected — left at original size');
+        // Say what the page actually is. A call sheet's column grid also trips
+        // the dual-cue heuristic, so without this it reports itself as a
+        // dual-dialogue block instead of a non-script page.
+        if (!pageReport.dialogueLines) {
+          if (requested > 1.001) pageReport.warnings.push('no dialogue on this page: left at original size (title, coverage and call-sheet pages are not enlarged)');
+        } else if (P.hasDual) pageReport.warnings.push('dual-dialogue block detected — left at original size');
         pageReport.enlargedLines = P.lines.filter(l => l.cls === 'dialogue' && l.enlarge !== false).length;
         if (!pageReport.enlargedLines) pageReport.appliedScale = 1;
 
@@ -1769,6 +2228,10 @@
       return { bytes: outBytes, report };
     }
 
-    return { process, extract, analyze, PALETTE };
+    return {
+      process, extract, analyze, PALETTE,
+      // .sceneline interchange (spec v2)
+      parseSceneline, unionShows, reconcile, buildSidesBlock, buildScenelineExport, normalizeCueName,
+    };
   };
 });
