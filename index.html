@@ -62,6 +62,9 @@
               cursor:pointer; padding:2px 4px; }
   .chRemove:hover { color:var(--err); }
   input[type=range] { flex:1; min-width:200px; accent-color: var(--accent); height:34px; }
+  #wmRow input[type=text] { flex:1; min-width:220px; padding:8px 10px; border:1px solid var(--line);
+    border-radius:8px; background:var(--panel); color:inherit; font:inherit; }
+  #wmRow .wmOpt { font-weight:400; opacity:.65; }
   #scaleVal { font-family:"Courier New",monospace; font-size:20px; font-weight:700; width:70px; }
   #download { display:none; width:100%; padding:18px; font-size:21px; font-weight:700; color:#fff;
               background:var(--accent); border:0; border-radius:12px; cursor:pointer; margin:14px 0 6px; }
@@ -192,6 +195,13 @@
     </div>
   </div>
 
+  <div class="controls" id="wmRow">
+    <label for="wmText">Watermark text <span class="wmOpt">(optional)</span></label>
+    <input type="text" id="wmText" autocomplete="off" spellcheck="false"
+           placeholder="text stamped across each page, e.g. a name"
+           title="For maximum readability: if your copy is stamped with a watermark, enter its text exactly (separate several with |). It is then ignored when finding characters and sizing dialogue. The watermark itself stays on the page. Loading a .sceneline show file fills this in automatically when the file records the watermark.">
+  </div>
+
   <div id="status"></div>
   <ul id="warnings"></ul>
   <div id="reconcileBanner" hidden></div>
@@ -237,7 +247,7 @@
          target="_blank" rel="noopener noreferrer">Report an issue or request a feature</a></p>
   </section>
 
-  <footer>Sides Enlarger v1.8.1 &middot; Everything runs in your browser: no uploads, no accounts, no tracking.<br>
+  <footer>Sides Enlarger v1.9.0 &middot; Everything runs in your browser: no uploads, no accounts, no tracking.<br>
     <a href="https://github.com/gothamsound/sides-enlarger/blob/main/README.md#run-it-offline-keep-your-own-copy" target="_blank" rel="noopener noreferrer">How to download this page and run it offline</a><br>
     <a href="https://github.com/gothamsound/sides-enlarger/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT License</a>
     &middot; free software, provided as is with no warranty &middot; &copy; 2026 Gotham Sound and Communications, Inc.</footer>
@@ -1616,7 +1626,9 @@
         // item.rot; the classifier now does too. The rewriter still sees the
         // raw stream, so the watermark bytes stay byte-identical in the output.
         const bodyItems = items.filter(it => !it.rot);
-        pages.push({ index: p, width: vp.viewBox[2] - vp.viewBox[0], height: vp.viewBox[3] - vp.viewBox[1], lines: buildLines(bodyItems), rotatedItems: items.length - bodyItems.length });
+        // items kept raw so process() can re-build lines after grey-region
+        // exclusion (rects only known once the content streams are parsed)
+        pages.push({ index: p, width: vp.viewBox[2] - vp.viewBox[0], height: vp.viewBox[3] - vp.viewBox[1], lines: buildLines(bodyItems), items: bodyItems, rotatedItems: items.length - bodyItems.length });
       }
       await doc.destroy();
       return { pages, totalChars };
@@ -1792,9 +1804,177 @@
         }
       }
 
+      // ---- PDF-lib load, hoisted ahead of classification: grey-region
+      // detection reads the raw content streams, and its exclusions must land
+      // BEFORE lines are built and classified. Grey-shaded page regions are
+      // omitted / non-shooting context (Peter's rule, 2026-08-05): their text
+      // is never enlarged, never highlighted, contributes no characters, and
+      // is dropped from reader mode. The bytes stay untouched.
+      const pdfDoc = await PDFLib.PDFDocument.load(bytes, { updateMetadata: false, ignoreEncryption: true });
+      const ctx = pdfDoc.context;
+      const wasEncrypted = await decryptInPlace(PDFLib, pdfDoc);
+      const pdfPages = pdfDoc.getPages();
+      if (pdfPages.length !== pages.length) throw new Error('internal: page count mismatch between parsers');
+
+      const N = PDFLib.PDFName.of.bind(PDFLib.PDFName);
+      const latinOf = u8 => { let s = ''; for (let b = 0; b < u8.length; b++) s += String.fromCharCode(u8[b]); return s; };
+      const bytesOfLatin = str => { const a = new Uint8Array(str.length); for (let b = 0; b < str.length; b++) a[b] = str.charCodeAt(b) & 0xff; return a; };
+      const decodeStream = st => {
+        const hasFilter = st.dict && st.dict.get(N('Filter'));
+        if (st instanceof PDFLib.PDFRawStream) return hasFilter ? PDFLib.decodePDFRawStream(st).decode() : st.contents;
+        if (st.getContents) return st.getContents();
+        return new Uint8Array(0);
+      };
+      const matrixOf = dict => {
+        const mArr = dict && dict.get(N('Matrix'));
+        const r = mArr && ctx.lookup(mArr);
+        if (r && r.size && r.size() === 6) return [0, 1, 2, 3, 4, 5].map(k => ctx.lookup(r.get(k)).asNumber());
+        return [1, 0, 0, 1, 0, 0];
+      };
+      const pageStreamsLatin = page0 => {
+        const resolved0 = ctx.lookup(page0.node.get(N('Contents')));
+        const streams0 = [];
+        if (resolved0 instanceof PDFLib.PDFArray) {
+          for (let k = 0; k < resolved0.size(); k++) streams0.push(ctx.lookup(resolved0.get(k)));
+        } else if (resolved0) streams0.push(resolved0);
+        let latin0 = '';
+        for (const st of streams0) latin0 += latinOf(decodeStream(st)) + '\n';
+        return latin0;
+      };
+      const pageResourcesOf = page0 => page0.node.Resources ? page0.node.Resources() : ctx.lookup(page0.node.get(N('Resources')));
+
+      // Grey-region detection: filled `re` rects with an even grey fill
+      // (components equal within 0.05, mean 0.2-0.92 — validated against real
+      // packets at 0.75/0.85) big enough to hold a text line (>= 36x14pt),
+      // collected in PDF user space through form CTMs. Best-effort: any parse
+      // trouble means no exclusions, never a failure.
+      const collectGreyRects = () => {
+        const perPage = [];
+        const isGrey = comps => {
+          if (!comps || !comps.length || comps.some(v => !isFinite(v))) return false;
+          let mn = Infinity, mx = -Infinity, sum = 0;
+          for (const v of comps) { mn = Math.min(mn, v); mx = Math.max(mx, v); sum += v; }
+          const mean = sum / comps.length;
+          return mx - mn < 0.05 && mean >= 0.2 && mean <= 0.92;
+        };
+        const resolveXF = (resources, tok) => {
+          if (!resources || !tok || tok.raw[0] !== '/') return null;
+          const xoRef = resources.get(N('XObject'));
+          const xoDict = xoRef && ctx.lookup(xoRef);
+          const ref = xoDict && xoDict.get(N(tok.raw.slice(1)));
+          const form = ref && ctx.lookup(ref);
+          if (!form || !form.dict) return null;
+          const sub = form.dict.get(N('Subtype'));
+          if (!sub || sub.toString() !== '/Form') return null;
+          const fResRef = form.dict.get(N('Resources'));
+          return { form, res: fResRef ? ctx.lookup(fResRef) : resources };
+        };
+        const walk = (src, resources, ctm0, out, depth) => {
+          if (depth > 4) return;
+          if (src.indexOf('BI') !== -1 && /(^|[\s>\]])BI[\s\/]/.test(src)) return;
+          let ctm = ctm0, fill = null; // fill: component array, or null = unknown/not-grey-able
+          const stack = [];
+          let rects = [];
+          for (const ins of toInstructions(tokenize(src), src)) {
+            const nums = () => ins.operands.map(t => parseFloat(t.raw));
+            if (ins.op === 'q') { stack.push({ ctm, fill }); continue; }
+            if (ins.op === 'Q') { const s = stack.pop(); if (s) { ctm = s.ctm; fill = s.fill; } continue; }
+            if (ins.op === 'cm' && ins.operands.length === 6) { ctm = mul(nums(), ctm); continue; }
+            if (ins.op === 'g') { fill = nums().slice(0, 1); continue; }
+            if (ins.op === 'rg') { fill = nums().slice(0, 3); continue; }
+            if (ins.op === 'k') { const n4 = nums(); fill = (Math.max(n4[0], n4[1], n4[2]) - Math.min(n4[0], n4[1], n4[2]) < 0.05) ? [1 - Math.min(1, n4[3] + (n4[0] + n4[1] + n4[2]) / 3)] : null; continue; }
+            if (ins.op === 'cs') { fill = null; continue; }
+            if (ins.op === 'sc' || ins.op === 'scn') {
+              const vals = ins.operands.map(t => parseFloat(t.raw));
+              fill = (vals.length >= 1 && vals.length <= 3 && vals.every(v => isFinite(v))) ? vals
+                : (vals.length === 4 && vals.every(v => isFinite(v))) ? [1 - Math.min(1, vals[3] + (vals[0] + vals[1] + vals[2]) / 3)]
+                : null;
+              continue;
+            }
+            if (ins.op === 're' && ins.operands.length === 4) { rects.push(nums()); continue; }
+            if (ins.op === 'f' || ins.op === 'F' || ins.op === 'f*' || ins.op === 'b' || ins.op === 'b*' || ins.op === 'B' || ins.op === 'B*') {
+              if (isGrey(fill)) {
+                for (const r of rects) {
+                  const c1 = apply(ctm, r[0], r[1]), c2 = apply(ctm, r[0] + r[2], r[1] + r[3]);
+                  const x0 = Math.min(c1[0], c2[0]), x1 = Math.max(c1[0], c2[0]);
+                  const y0 = Math.min(c1[1], c2[1]), y1 = Math.max(c1[1], c2[1]);
+                  if (x1 - x0 >= 36 && y1 - y0 >= 14) out.push([x0, y0, x1, y1]);
+                }
+              }
+              rects = []; continue;
+            }
+            if (ins.op === 'S' || ins.op === 's' || ins.op === 'n') { rects = []; continue; }
+            if (ins.op === 'Do') {
+              const hit = resolveXF(resources, ins.operands[0]);
+              if (hit) { try { walk(latinOf(decodeStream(hit.form)), hit.res, mul(matrixOf(hit.form.dict), ctm), out, depth + 1); } catch (e) { /* best-effort */ } }
+              continue;
+            }
+          }
+        };
+        for (const page0 of pdfPages) {
+          const out = [];
+          try { walk(pageStreamsLatin(page0), pageResourcesOf(page0), [1, 0, 0, 1, 0, 0], out, 0); } catch (e) { /* best-effort */ }
+          perPage.push(out);
+        }
+        return perPage;
+      };
+
+      let greyPages = 0, greyRuns = 0;
+      try {
+        const greyRects = collectGreyRects();
+        for (let i = 0; i < pages.length; i++) {
+          const rects = greyRects[i];
+          if (!rects || !rects.length) continue;
+          const P = pages[i];
+          const live = P.items.filter(it => {
+            const px = it.x + it.w / 2, py = it.y + 3;
+            return !rects.some(r => px >= r[0] - 1 && px <= r[2] + 1 && py >= r[1] - 1 && py <= r[3] + 1);
+          });
+          if (live.length !== P.items.length) {
+            P.greyExcluded = P.items.length - live.length;
+            greyRuns += P.greyExcluded; greyPages++;
+            P.lines = buildLines(live);
+          }
+        }
+      } catch (e) { /* grey detection is best-effort; classification proceeds on all text */ }
+
+      // Optional user-declared watermark text (opts.watermarkText): the
+      // interim answer for NON-rotated stamps, which geometry can't tell from
+      // body text (the rotated class is handled automatically above; the full
+      // repeated-position strip is scriptparse policy data and arrives with
+      // package adoption). This is user-directed exclusion of an exact string,
+      // NOT content-based classification: the geometric-detection law stands.
+      // Matches whole items and whole gap-joined segments (covers word-per-op
+      // and glyph-per-op stamps); matched text is excluded from classification
+      // but its bytes stay untouched.
+      const normWm = s => String(s || '').replace(/\s+/g, ' ').trim().toUpperCase();
+      const wmSet = new Set([].concat(opts.watermarkText || []).map(normWm).filter(Boolean));
+      let wmRuns = 0, wmPages = 0;
+      if (wmSet.size) {
+        for (const P of pages) {
+          let live = (P.greyExcluded ? P.lines.flatMap(L => L.items) : P.items)
+            .filter(it => !wmSet.has(normWm(it.str)));
+          let lines = buildLines(live);
+          const drop = new Set();
+          for (const L of lines) for (const sg of L.segments) {
+            if (wmSet.has(normWm(sg.text))) for (const it of sg.items) drop.add(it);
+          }
+          if (drop.size) { live = live.filter(it => !drop.has(it)); lines = buildLines(live); }
+          const removed = (P.greyExcluded ? P.lines.reduce((n, L) => n + L.items.length, 0) : P.items.length) - live.length;
+          if (removed) { wmRuns += removed; wmPages++; P.lines = lines; }
+        }
+      }
+
       const cal = calibrate(pages);
       const report = { requestedScale: requested, mode, calibration: cal, pages: [], warnings: [] };
       report.enlargeOnly = enlargeSet ? Array.from(enlargeSet) : null;
+      if (wasEncrypted) report.warnings.push('Input was permission-locked (encrypted); output is a decrypted copy — treat it with the same care as the original.');
+      if (greyRuns) report.warnings.push('Grey-shaded (omitted) regions detected: ' + greyRuns + ' text run' + (greyRuns === 1 ? '' : 's') + ' across ' + greyPages + ' page' + (greyPages === 1 ? '' : 's') + ' left untouched — not enlarged, not highlighted, and not counted toward the character list.');
+      if (wmSet.size) {
+        report.warnings.push(wmRuns
+          ? 'Watermark text matched and excluded from character detection on ' + wmPages + ' page' + (wmPages === 1 ? '' : 's') + ' (' + wmRuns + ' run' + (wmRuns === 1 ? '' : 's') + '); the watermark itself is untouched.'
+          : 'The watermark text you entered did not match any text in this PDF — check the spelling, or leave the field empty.');
+      }
       if (!cal) {
         report.warnings.push('Could not locate character cues geometrically — layout too unusual. PDF returned unchanged.');
         report.characters = [];
@@ -1848,22 +2028,8 @@
         return { bytes: readerBytes, report };
       }
 
-      const pdfDoc = await PDFLib.PDFDocument.load(bytes, { updateMetadata: false, ignoreEncryption: true });
-      const ctx = pdfDoc.context;
-      const wasEncrypted = await decryptInPlace(PDFLib, pdfDoc);
-      if (wasEncrypted) report.warnings.push('Input was permission-locked (encrypted); output is a decrypted copy — treat it with the same care as the original.');
-      const pdfPages = pdfDoc.getPages();
-      if (pdfPages.length !== pages.length) throw new Error('internal: page count mismatch between parsers');
-
-      const N = PDFLib.PDFName.of.bind(PDFLib.PDFName);
-      const latinOf = u8 => { let s = ''; for (let b = 0; b < u8.length; b++) s += String.fromCharCode(u8[b]); return s; };
-      const bytesOfLatin = str => { const a = new Uint8Array(str.length); for (let b = 0; b < str.length; b++) a[b] = str.charCodeAt(b) & 0xff; return a; };
-      const decodeStream = st => {
-        const hasFilter = st.dict && st.dict.get(N('Filter'));
-        if (st instanceof PDFLib.PDFRawStream) return hasFilter ? PDFLib.decodePDFRawStream(st).decode() : st.contents;
-        if (st.getContents) return st.getContents();
-        return new Uint8Array(0);
-      };
+      // (pdfDoc/ctx/decoding helpers are hoisted above classification — the
+      // grey-region pass needs them before lines are built)
       const putStreamPlain = (st, str) => {
         const b = bytesOfLatin(str);
         st.contents = b;
@@ -1872,12 +2038,6 @@
         st.dict.delete(N('DecodeParms'));
         st.dict.delete(N('DL'));
       };
-      const matrixOf = dict => {
-        const mArr = dict && dict.get(N('Matrix'));
-        const r = mArr && ctx.lookup(mArr);
-        if (r && r.size && r.size() === 6) return [0, 1, 2, 3, 4, 5].map(k => ctx.lookup(r.get(k)).asNumber());
-        return [1, 0, 0, 1, 0, 0];
-      };
       const visitedForms = new Set();
 
       // Forms invoked more than once (shared across pages, or placed twice)
@@ -1885,36 +2045,105 @@
       // into every other placement. Count every invocation up front; pages
       // that draw text through a multi-use form are left unscaled entirely.
       const formUse = new Map();     // refKey -> total invocations
-      const formHasText = new Map(); // refKey -> shows text (self or nested)
+      const formHasText = new Map(); // refKey -> shows HORIZONTAL text at some invocation
       const pageSharedTextForm = [];
       {
-        const srcCache = new Map();
-        const walk = (src, resources, seen, keysOut) => {
-          if (src.indexOf('BI') !== -1 && /(^|[\s>\]])BI[\s\/]/.test(src)) return true; // inline image: don't parse, assume text
-          let hasText = false;
+        // A multi-use form whose text is ALL rotated (per-recipient watermark
+        // stamps: "James Baker" at 40° on every page) can never carry dialogue,
+        // so it must not cost the page its enlargement. Collect each form's
+        // text matrices in FORM SPACE once, then test them against every
+        // invocation's CTM: only horizontal text (same |b| > 0.05*size test as
+        // item.rot) marks the form text-carrying. Anything unparseable stays
+        // conservative (treated as horizontal). The never-mutate-multi-use
+        // rule in rewriteLevel is unchanged — stamps stay byte-identical.
+        const ID = [1, 0, 0, 1, 0, 0];
+        const rotated = m => Math.abs(m[1]) > 0.05 * (Math.hypot(m[2], m[3]) || 1);
+        const relCache = new Map(); // refKey -> {mats:[{m,key}], nestedCounts:Map, keys:Set, conservative}
+        const resolveForm = (resources, nameTok) => {
+          if (!resources || !nameTok || nameTok.raw[0] !== '/') return null;
+          const xoRef = resources.get(N('XObject'));
+          const xoDict = xoRef && ctx.lookup(xoRef);
+          const ref = xoDict && xoDict.get(N(nameTok.raw.slice(1)));
+          const form = ref && ctx.lookup(ref);
+          if (!form || !form.dict) return null;
+          const sub = form.dict.get(N('Subtype'));
+          if (!sub || sub.toString() !== '/Form') return null;
+          return { form, key: ref.objectNumber + '_' + ref.generationNumber };
+        };
+        // Parse one form's stream in its own space; nested forms fold their
+        // (composed) text matrices and invocation counts into the parent.
+        const parseRel = (key, form, outerRes, depth) => {
+          if (relCache.has(key)) return relCache.get(key);
+          const rel = { mats: [], nestedCounts: new Map(), keys: new Set([key]), conservative: false };
+          relCache.set(key, rel); // set first: a self-recursive form stays sane
+          const bump = (k, n) => rel.nestedCounts.set(k, (rel.nestedCounts.get(k) || 0) + n);
+          try {
+            const src = latinOf(decodeStream(form));
+            if (src.indexOf('BI') !== -1 && /(^|[\s>\]])BI[\s\/]/.test(src)) { rel.conservative = true; return rel; }
+            if (depth > 4) { rel.conservative = true; return rel; }
+            const fResRef = form.dict.get(N('Resources'));
+            const fRes = fResRef ? ctx.lookup(fResRef) : outerRes;
+            let ctm = ID, tm = null;
+            const stack = [];
+            for (const ins of toInstructions(tokenize(src), src)) {
+              const nums = () => ins.operands.map(t => parseFloat(t.raw));
+              if (ins.op === 'q') { stack.push(ctm); continue; }
+              if (ins.op === 'Q') { ctm = stack.pop() || ID; continue; }
+              if (ins.op === 'cm' && ins.operands.length === 6) { ctm = mul(nums(), ctm); continue; }
+              if (ins.op === 'BT') { tm = ID; continue; }
+              if (ins.op === 'ET') { tm = null; continue; }
+              if (ins.op === 'Tm' && ins.operands.length === 6) { tm = nums(); continue; }
+              if ((ins.op === 'Td' || ins.op === 'TD') && tm) { const n2 = nums(); tm = mul([1, 0, 0, 1, n2[0], n2[1]], tm); continue; }
+              if (ins.op === 'Tj' || ins.op === 'TJ' || ins.op === "'" || ins.op === '"') {
+                if (!tm) { rel.conservative = true; break; }
+                rel.mats.push({ m: mul(tm, ctm), key });
+                if (rel.mats.length > 800) { rel.conservative = true; break; }
+                continue;
+              }
+              if (ins.op === 'Do') {
+                const hit = resolveForm(fRes, ins.operands[0]);
+                if (!hit) continue;
+                bump(hit.key, 1);
+                const inner = parseRel(hit.key, hit.form, fRes, depth + 1);
+                if (inner.conservative) { rel.conservative = true; break; }
+                const innerInv = mul(matrixOf(hit.form.dict), ctm);
+                for (const t of inner.mats) rel.mats.push({ m: mul(t.m, innerInv), key: t.key });
+                for (const k of inner.keys) rel.keys.add(k);
+                for (const [k, n] of inner.nestedCounts) bump(k, n);
+                if (rel.mats.length > 800) { rel.conservative = true; break; }
+              }
+            }
+          } catch (e) { rel.conservative = true; }
+          return rel;
+        };
+        // Page pass: absolute space. Count every invocation (nested counts fold
+        // in per invocation of the parent) and test each form's text rotation
+        // under this invocation's CTM.
+        const walkPage = (src, resources, keysOut) => {
+          if (src.indexOf('BI') !== -1 && /(^|[\s>\]])BI[\s\/]/.test(src)) return; // rewriteStream guards BI pages itself
+          let ctm = ID, tm = null;
+          const stack = [];
           for (const ins of toInstructions(tokenize(src), src)) {
-            if (ins.op === 'Tj' || ins.op === 'TJ' || ins.op === "'" || ins.op === '"') { hasText = true; continue; }
-            if (ins.op !== 'Do' || !ins.operands[0] || ins.operands[0].raw[0] !== '/' || !resources) continue;
-            const xoRef = resources.get(N('XObject'));
-            const xoDict = xoRef && ctx.lookup(xoRef);
-            const ref2 = xoDict && xoDict.get(N(ins.operands[0].raw.slice(1)));
-            const form = ref2 && ctx.lookup(ref2);
-            if (!form || !form.dict) continue;
-            const sub = form.dict.get(N('Subtype'));
-            if (!sub || sub.toString() !== '/Form') continue;
-            const key = ref2.objectNumber + '_' + ref2.generationNumber;
-            formUse.set(key, (formUse.get(key) || 0) + 1);
-            keysOut.add(key);
-            if (!seen.has(key)) {
-              seen.add(key);
-              if (!srcCache.has(key)) srcCache.set(key, latinOf(decodeStream(form)));
-              const fResRef = form.dict.get(N('Resources'));
-              const inner = walk(srcCache.get(key), fResRef ? ctx.lookup(fResRef) : resources, seen, keysOut);
-              formHasText.set(key, !!(formHasText.get(key) || inner));
-              if (inner) hasText = true;
-            } else if (formHasText.get(key)) hasText = true;
+            const nums = () => ins.operands.map(t => parseFloat(t.raw));
+            if (ins.op === 'q') { stack.push(ctm); continue; }
+            if (ins.op === 'Q') { ctm = stack.pop() || ID; continue; }
+            if (ins.op === 'cm' && ins.operands.length === 6) { ctm = mul(nums(), ctm); continue; }
+            if (ins.op === 'BT') { tm = ID; continue; }
+            if (ins.op === 'ET') { tm = null; continue; }
+            if (ins.op === 'Tm' && ins.operands.length === 6) { tm = nums(); continue; }
+            if (ins.op !== 'Do') continue;
+            const hit = resolveForm(resources, ins.operands[0]);
+            if (!hit) continue;
+            formUse.set(hit.key, (formUse.get(hit.key) || 0) + 1);
+            const rel = parseRel(hit.key, hit.form, resources, 0);
+            for (const [k, n] of rel.nestedCounts) formUse.set(k, (formUse.get(k) || 0) + n);
+            for (const k of rel.keys) keysOut.add(k);
+            if (rel.conservative) { for (const k of rel.keys) formHasText.set(k, true); continue; }
+            const inv = mul(matrixOf(hit.form.dict), ctm);
+            for (const t of rel.mats) {
+              if (!rotated(mul(t.m, inv))) formHasText.set(t.key, true);
+            }
           }
-          return hasText;
         };
         for (let i = 0; i < pdfPages.length; i++) {
           const keys = new Set();
@@ -1927,7 +2156,7 @@
           let latin0 = '';
           for (const st of streams0) latin0 += latinOf(decodeStream(st)) + '\n';
           const pageRes0 = page0.node.Resources ? page0.node.Resources() : ctx.lookup(page0.node.get(N('Resources')));
-          try { walk(latin0, pageRes0, new Set(), keys); } catch (e) { /* count best-effort */ }
+          try { walkPage(latin0, pageRes0, keys); } catch (e) { /* count best-effort */ }
           pageSharedTextForm.push(keys);
         }
         for (let i = 0; i < pageSharedTextForm.length; i++) {
@@ -2319,6 +2548,7 @@
   var drop = document.getElementById('drop');
   var fileInput = document.getElementById('file');
   var slider = document.getElementById('scale');
+  var wmInput = document.getElementById('wmText');
   var scaleVal = document.getElementById('scaleVal');
   var status = document.getElementById('status');
   var warnUl = document.getElementById('warnings');
@@ -2338,7 +2568,7 @@
   var exportRow = document.getElementById('exportRow');
   var exportBtn = document.getElementById('exportBtn');
   var exportFullBtn = document.getElementById('exportFullBtn');
-  var APP_VERSION = '1.8.1';
+  var APP_VERSION = '1.9.0';
 
   var prefs = loadPrefs();
   if (prefs.scale >= 1 && prefs.scale <= 1.5) slider.value = prefs.scale;
@@ -2702,6 +2932,24 @@
       catch (e) { setStatus(e && e.message ? e.message : 'Could not read that .sceneline file.', true); return; }
       loadedShows = loadedShows.filter(function (s) { return s.name !== file.name; });
       loadedShows.push({ name: file.name, parsed: parsed });
+      // spec §2 rule 7: the show file may record the stamped watermark text
+      // (show.burn_ins). Prefill the watermark field from it, never overwrite
+      // something the user already typed.
+      if (!wmInput.value.trim()) {
+        var burnTexts = [];
+        loadedShows.forEach(function (s) {
+          var bi = s.parsed && s.parsed.show && s.parsed.show.burn_ins;
+          (Array.isArray(bi) ? bi : []).forEach(function (b) {
+            var t = b && typeof b.text === 'string' ? b.text.trim() : '';
+            if (t && burnTexts.indexOf(t) === -1) burnTexts.push(t);
+          });
+        });
+        if (burnTexts.length) {
+          wmInput.value = burnTexts.join(' | ');
+          setStatus('Watermark text filled in from the show file (' + burnTexts.length + ' entr' + (burnTexts.length === 1 ? 'y' : 'ies') + '); it will be ignored during character detection.');
+          scheduleProcess();
+        }
+      }
       (parsed.warnings || []).forEach(function (w) {
         var li = document.createElement('li'); li.textContent = file.name + ': ' + w; warnUl.appendChild(li);
       });
@@ -2800,6 +3048,9 @@
     // yield to paint before heavy work
     setTimeout(function () {
       var opts = { scale: s, highlights: activeHighlights() };
+      var wmT = (wmInput.value || '').split('|').map(function (t) { return t.trim(); })
+        .filter(function (t) { return t; });
+      if (wmT.length) opts.watermarkText = wmT;
       if (prefs.enlargeMode === 'page') opts.mode = 'page';
       else if (prefs.enlargeMode === 'reader') opts.mode = 'reader';
       else if (prefs.enlargeMode === 'selected') {
@@ -2922,6 +3173,9 @@
     savePrefs(prefs);
     scheduleProcess();
   });
+
+  // watermark text (per-document, deliberately NOT saved in prefs)
+  wmInput.addEventListener('input', function () { scheduleProcess(); });
 
   // download
   dlBtn.addEventListener('click', function () {
